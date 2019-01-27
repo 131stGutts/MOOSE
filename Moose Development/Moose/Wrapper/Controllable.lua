@@ -1095,12 +1095,12 @@ function CONTROLLABLE:TaskBombingRunway( Airbase, WeaponType, WeaponExpend, Atta
   local DCSTask
   DCSTask = { id = 'BombingRunway',
     params = {
-    point = Airbase:GetID(),
+    runwayId = Airbase:GetID(),
     weaponType = WeaponType, 
     expend = WeaponExpend,
     attackQty = AttackQty, 
     direction = Direction, 
-    controllableAttack = ControllableAttack, 
+    groupAttack  = ControllableAttack, 
     },
   },
 
