@@ -400,7 +400,8 @@ function CONTROLLABLE:SetTask( DCSTask, WaitTime )
         local Controller = self:_GetController()
         --self:I( "Before SetTask" )
         Controller:setTask( DCSTask )
-        --self:I( "After SetTask" )
+        -- AI_FORMATION class (used by RESCUEHELO) calls SetTask twice per second! hence spamming the DCS log file ==> setting this to trace. 
+        self:T( { ControllableName = self:GetName(), DCSTask = DCSTask } )
       else
         BASE:E( { DCSControllableName .. " is not alive anymore.", DCSTask = DCSTask } )
       end
@@ -408,6 +409,8 @@ function CONTROLLABLE:SetTask( DCSTask, WaitTime )
 
     if not WaitTime or WaitTime == 0 then
       SetTask( self, DCSTask )
+      -- See above.
+      self:T( { ControllableName = self:GetName(), DCSTask = DCSTask } )
     else
       self.TaskScheduler:Schedule( self, SetTask, { DCSTask }, WaitTime )
     end
@@ -761,6 +764,27 @@ function CONTROLLABLE:CommandDeactivateICLS(Delay)
   return self
 end
 
+--- Set callsign of the CONTROLLABLE. See [DCS_command_setCallsign](https://wiki.hoggitworld.com/view/DCS_command_setCallsign)
+-- @param #CONTROLLABLE self
+-- @param DCS#CALLSIGN CallName Number corresponding the the callsign identifier you wish this group to be called.
+-- @param #number CallNumber The number value the group will be referred to as. Only valid numbers are 1-9. For example Uzi **5**-1. Default 1.
+-- @param #number Delay (Optional) Delay in seconds before the callsign is set. Default is immediately.
+-- @return #CONTROLLABLE self
+function CONTROLLABLE:CommandSetCallsign(CallName, CallNumber, Delay)
+  self:F()
+  
+  -- Command to set the callsign. 
+  local CommandSetCallsign={id='SetCallsign', params={callname=CallName, callnumber=CallNumber or 1}}
+
+  if Delay and Delay>0 then
+    SCHEDULER:New(nil, self.CommandSetCallsign, {self, CallName, CallNumber}, Delay)
+  else  
+    self:SetCommand(CommandSetCallsign)
+  end
+
+  return self
+end
+
 
 -- TASKS FOR AIR CONTROLLABLES
 --- (AIR) Attack a Controllable.
@@ -1036,7 +1060,7 @@ end
 -- @param #CONTROLLABLE self
 -- @param #number Altitude The altitude [m] to hold the position.
 -- @param #number Speed The speed [m/s] flying when holding the position.
--- @param Core.Point#COORDINATE Coordinate The coordinate where to orbit.
+-- @param Core.Point#COORDINATE Coordinate (optional) The coordinate where to orbit. If the coordinate is not given, then the current position of the controllable is used.
 -- @return #CONTROLLABLE self
 function CONTROLLABLE:TaskOrbitCircle( Altitude, Speed, Coordinate )
   self:F2( { self.ControllableName, Altitude, Speed } )
