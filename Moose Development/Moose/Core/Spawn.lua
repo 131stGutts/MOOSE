@@ -8,7 +8,7 @@
 --   * Schedule spawning of new groups.
 --   * Put limits on the amount of groups that can be spawned, and the amount of units that can be alive at the same time.
 --   * Randomize the spawning location between different zones.
---   * Randomize the intial positions within the zones.
+--   * Randomize the initial positions within the zones.
 --   * Spawn in array formation.
 --   * Spawn uncontrolled (for planes or helos only).
 --   * Clean up inactive helicopters that "crashed".
@@ -325,6 +325,7 @@ function SPAWN:New( SpawnTemplatePrefix )
     self.SpawnInitFreq  = nil                       -- No special frequency.
     self.SpawnInitModu  = nil                       -- No special modulation.
     self.SpawnInitRadio = nil                       -- No radio comms setting.
+    self.SpawnInitModex = nil
 
 		self.SpawnGroups = {}														-- Array containing the descriptions of each Group to be Spawned.
 	else
@@ -376,6 +377,7 @@ function SPAWN:NewWithAlias( SpawnTemplatePrefix, SpawnAliasPrefix )
     self.SpawnInitFreq  = nil                       -- No special frequency.
     self.SpawnInitModu  = nil                       -- No special modulation.
     self.SpawnInitRadio = nil                       -- No radio comms setting.
+    self.SpawnInitModex = nil
     
 		self.SpawnGroups = {}														-- Array containing the descriptions of each Group to be Spawned.
 	else
@@ -430,6 +432,7 @@ function SPAWN:NewFromTemplate( SpawnTemplate, SpawnTemplatePrefix, SpawnAliasPr
     self.SpawnInitFreq  = nil                       -- No special frequency.
     self.SpawnInitModu  = nil                       -- No special modulation.
     self.SpawnInitRadio = nil                       -- No radio comms setting.
+    self.SpawnInitModex = nil
     
     self.SpawnGroups = {}                           -- Array containing the descriptions of each Group to be Spawned.
   else
@@ -639,6 +642,19 @@ function SPAWN:InitRadioModulation(modulation)
   else
     self.SpawnInitModu=radio.modulation.AM
   end
+  return self
+end
+
+--- Sets the modex of the first unit of the group. If more units are in the group, the number is increased by one with every unit.
+-- @param #SPAWN self 
+-- @param #number modex Modex of the first unit.
+-- @return #SPAWN self
+function SPAWN:InitModex(modex)
+
+  if modex then
+    self.SpawnInitModex=tonumber(modex)
+  end
+  
   return self
 end
 
@@ -1218,7 +1234,13 @@ function SPAWN:SpawnWithIndex( SpawnIndex )
             SpawnTemplate.units[UnitID].skill = self.SpawnInitSkill
           end
         end
-        
+
+        -- Set tail number.
+        if self.SpawnInitModex then
+          for UnitID = 1, #SpawnTemplate.units do
+            SpawnTemplate.units[UnitID].onboard_num = string.format("%03d", self.SpawnInitModex+(UnitID-1))
+          end
+        end
         
         -- Set radio comms on/off.
         if self.SpawnInitRadio then
@@ -2672,7 +2694,10 @@ function SPAWN:_OnLand( EventData )
   			if self.RepeatOnLanding then
   				local SpawnGroupIndex = self:GetSpawnIndexFromGroup( SpawnGroup )
   				self:T( { "Landed:", "ReSpawn:", SpawnGroup:GetName(), SpawnGroupIndex } )
-  				self:ReSpawn( SpawnGroupIndex )
+  				--self:ReSpawn( SpawnGroupIndex )
+  				-- Delay respawn by three seconds due to DCS 2.5.4.26368 OB bug https://github.com/FlightControl-Master/MOOSE/issues/1076
+  				-- Bug was initially only for engine shutdown event but after ED "fixed" it, it now happens on landing events.
+  				SCHEDULER:New(nil, self.ReSpawn, {self, SpawnGroupIndex}, 3)
   			end
   		end
     end

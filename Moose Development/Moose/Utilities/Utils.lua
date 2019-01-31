@@ -56,6 +56,68 @@ DCSMAP = {
   PersianGulf="PersianGulf"
 }
 
+
+--- See [DCS_enum_callsigns](https://wiki.hoggitworld.com/view/DCS_enum_callsigns)
+-- @type CALLSIGN
+-- @field #table Aircraft Aircraft callsigns.
+-- @field #table AWACS AWACS callsigns.
+-- @field #table Tanker Tanker callsigns.
+-- @field #table JTAC JTAC callsigns.
+CALLSIGN={
+  -- Aircraft
+  Aircraft={
+    Enfield=1,
+    Springfield=2,
+    Uzi=3,
+    Cold=4,
+    Dodge=5,
+    Ford=6,
+    Chevy=7,
+    Pontiac=8,
+    -- A-10A or A-10C
+    Hawg=9,
+    Boar=10,
+    Pig=11,
+    Tusk=12,
+  },
+  -- AWACS
+  AWACS={
+    Overloard=1,
+    Magic=2,
+    Wizard=3,
+    Focus=4,
+    Darkstar=5,
+  },
+  -- Tanker
+  Tanker={
+    Texaco=1,
+    Arco=2,
+    Shell=3,
+  }, 
+  -- JTAC
+  JTAC={
+    Axeman=1,
+    Darknight=2,
+    Warrier=3,
+    Pointer=4,
+    Eyeball=5,
+    Moonbeam=6,
+    Whiplash=7,
+    Finger=8,
+    Pinpoint=9,
+    Ferret=10,
+    Shaba=11,
+    Playboy=12,
+    Hammer=13,
+    Jaguar=14,
+    Deathstar=15,
+    Anvil=16,
+    Firefly=17,
+    Mantis=18,
+    Badger=19,
+  },
+} --#CALLSIGN
+
 --- Utilities static class.
 -- @type UTILS
 UTILS = {
@@ -828,4 +890,19 @@ function UTILS.GetMagneticDeclination(map)
   return declination
 end
 
-
+--- Checks if a file exists or not. This requires **io** to be desanitized.
+-- @param #string file File that should be checked.
+-- @return #boolean True if the file exists, false if the file does not exist or nil if the io module is not available and the check could not be performed.
+function UTILS.FileExists(file)
+  if io then
+    local f=io.open(file, "r")
+    if f~=nil then
+      io.close(f)
+      return true
+    else
+      return false
+    end
+  else
+    return nil
+  end  
+end
