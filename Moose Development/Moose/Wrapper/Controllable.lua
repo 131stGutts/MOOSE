@@ -400,7 +400,8 @@ function CONTROLLABLE:SetTask( DCSTask, WaitTime )
         local Controller = self:_GetController()
         --self:I( "Before SetTask" )
         Controller:setTask( DCSTask )
-        --self:I( "After SetTask" )
+        -- AI_FORMATION class (used by RESCUEHELO) calls SetTask twice per second! hence spamming the DCS log file ==> setting this to trace. 
+        self:T( { ControllableName = self:GetName(), DCSTask = DCSTask } )
       else
         BASE:E( { DCSControllableName .. " is not alive anymore.", DCSTask = DCSTask } )
       end
@@ -408,6 +409,8 @@ function CONTROLLABLE:SetTask( DCSTask, WaitTime )
 
     if not WaitTime or WaitTime == 0 then
       SetTask( self, DCSTask )
+      -- See above.
+      self:T( { ControllableName = self:GetName(), DCSTask = DCSTask } )
     else
       self.TaskScheduler:Schedule( self, SetTask, { DCSTask }, WaitTime )
     end
@@ -761,6 +764,27 @@ function CONTROLLABLE:CommandDeactivateICLS(Delay)
   return self
 end
 
+--- Set callsign of the CONTROLLABLE. See [DCS_command_setCallsign](https://wiki.hoggitworld.com/view/DCS_command_setCallsign)
+-- @param #CONTROLLABLE self
+-- @param DCS#CALLSIGN CallName Number corresponding the the callsign identifier you wish this group to be called.
+-- @param #number CallNumber The number value the group will be referred to as. Only valid numbers are 1-9. For example Uzi **5**-1. Default 1.
+-- @param #number Delay (Optional) Delay in seconds before the callsign is set. Default is immediately.
+-- @return #CONTROLLABLE self
+function CONTROLLABLE:CommandSetCallsign(CallName, CallNumber, Delay)
+  self:F()
+  
+  -- Command to set the callsign. 
+  local CommandSetCallsign={id='SetCallsign', params={callname=CallName, callnumber=CallNumber or 1}}
+
+  if Delay and Delay>0 then
+    SCHEDULER:New(nil, self.CommandSetCallsign, {self, CallName, CallNumber}, Delay)
+  else  
+    self:SetCommand(CommandSetCallsign)
+  end
+
+  return self
+end
+
 
 -- TASKS FOR AIR CONTROLLABLES
 --- (AIR) Attack a Controllable.
@@ -1036,7 +1060,7 @@ end
 -- @param #CONTROLLABLE self
 -- @param #number Altitude The altitude [m] to hold the position.
 -- @param #number Speed The speed [m/s] flying when holding the position.
--- @param Core.Point#COORDINATE Coordinate The coordinate where to orbit.
+-- @param Core.Point#COORDINATE Coordinate (optional) The coordinate where to orbit. If the coordinate is not given, then the current position of the controllable is used.
 -- @return #CONTROLLABLE self
 function CONTROLLABLE:TaskOrbitCircle( Altitude, Speed, Coordinate )
   self:F2( { self.ControllableName, Altitude, Speed } )
@@ -1068,17 +1092,27 @@ end
 
 
 
---- (AIR) Delivering weapon on the runway.
+--- (AIR) Delivering weapon on the runway. See [hoggit](https://wiki.hoggitworld.com/view/DCS_task_bombingRunway)
+-- 
+-- Make sure the aircraft has the following role:
+-- 
+-- * CAS
+-- * Ground Attack
+-- * Runway Attack
+-- * Anti-Ship Strike
+-- * AFAC
+-- * Pinpoint Strike
+-- 
 -- @param #CONTROLLABLE self
 -- @param Wrapper.Airbase#AIRBASE Airbase Airbase to attack.
--- @param #number WeaponType (optional) Bitmask of weapon types those allowed to use. If parameter is not defined that means no limits on weapon usage.
--- @param DCS#AI.Task.WeaponExpend WeaponExpend (optional) Determines how much weapon will be released at each attack. If parameter is not defined the unit / controllable will choose expend on its own discretion.
--- @param #number AttackQty (optional) This parameter limits maximal quantity of attack. The aicraft/controllable will not make more attack than allowed even if the target controllable not destroyed and the aicraft/controllable still have ammo. If not defined the aircraft/controllable will attack target until it will be destroyed or until the aircraft/controllable will run out of ammo.
+-- @param #number WeaponType (optional) Bitmask of weapon types those allowed to use. See [DCS enum weapon flag](https://wiki.hoggitworld.com/view/DCS_enum_weapon_flag). Default 2147485694 = AnyBomb (GuidedBomb + AnyUnguidedBomb).
+-- @param DCS#AI.Task.WeaponExpend WeaponExpend Enum AI.Task.WeaponExpend that defines how much munitions the AI will expend per attack run. Default "ALL".
+-- @param #number AttackQty Number of times the group will attack if the target. Default 1.
 -- @param DCS#Azimuth Direction (optional) Desired ingress direction from the target to the attacking aircraft. Controllable/aircraft will make its attacks from the direction. Of course if there is no way to attack from the direction due the terrain controllable/aircraft will choose another direction.
--- @param #boolean ControllableAttack (optional) Flag indicates that the target must be engaged by all aircrafts of the controllable. Has effect only if the task is assigned to a controllable, not to a single aircraft.
+-- @param #boolean GroupAttack (optional) Flag indicates that the target must be engaged by all aircrafts of the controllable. Has effect only if the task is assigned to a group and not to a single aircraft.
 -- @return DCS#Task The DCS task structure.
-function CONTROLLABLE:TaskBombingRunway( Airbase, WeaponType, WeaponExpend, AttackQty, Direction, ControllableAttack )
-  self:F2( { self.ControllableName, Airbase, WeaponType, WeaponExpend, AttackQty, Direction, ControllableAttack } )
+function CONTROLLABLE:TaskBombingRunway(Airbase, WeaponType, WeaponExpend, AttackQty, Direction, GroupAttack)
+  self:F2( { self.ControllableName, Airbase, WeaponType, WeaponExpend, AttackQty, Direction, GroupAttack } )
 
 --  BombingRunway = { 
 --    id = 'BombingRunway', 
@@ -1088,19 +1122,24 @@ function CONTROLLABLE:TaskBombingRunway( Airbase, WeaponType, WeaponExpend, Atta
 --      expend = enum AI.Task.WeaponExpend,
 --      attackQty = number, 
 --      direction = Azimuth, 
---      controllableAttack = boolean, 
+--      groupAttack = boolean, 
 --    } 
---  } 
+--  }
+
+  -- Defaults.
+  WeaponType=WeaponType or 2147485694
+  WeaponExpend=WeaponExpend or AI.Task.WeaponExpend.ALL
+  AttackQty=AttackQty or 1
 
   local DCSTask
   DCSTask = { id = 'BombingRunway',
     params = {
-    point = Airbase:GetID(),
+    runwayId = Airbase:GetID(),
     weaponType = WeaponType, 
     expend = WeaponExpend,
     attackQty = AttackQty, 
     direction = Direction, 
-    controllableAttack = ControllableAttack, 
+    groupAttack = GroupAttack, 
     },
   },
 
