@@ -902,6 +902,7 @@ AIRBOSS = {
   squadsetAI     = nil,
   excludesetAI   = nil,
   menusingle     = nil,
+  humansingle    = nil,
   collisiondist  = nil,
   Tmessage       = nil,
   soundfolder    = nil,
@@ -1770,6 +1771,7 @@ function AIRBOSS:New(carriername, alias)
   self:SetMenuMarkZones()
   self:SetMenuSmokeZones()
   self:SetMenuSingleCarrier(false)
+  self:SetMenuSingleHuman(true)
   
   -- Init carrier parameters.
   if self.carriertype==AIRBOSS.CarrierType.STENNIS then
@@ -2401,6 +2403,21 @@ function AIRBOSS:SetMenuSingleCarrier(switch)
     self.menusingle=true
   else
     self.menusingle=false
+  end
+  return self
+end
+
+
+--- Optimized F10 radio menu for a single human per group. The menu entries will be stored directly under F10 Other/Airboss/ and not F10 Other/Airboss/"Player Name"/.
+-- **WARNING**: If you use this with two human aircraft in the same groupd, the radio menu will be screwed up!
+-- @param #AIRBOSS self
+-- @param #boolean switch If true or nil simple menu is enabled. If false, menu is for multiple players in group for the mission.
+-- @return #AIRBOSS self
+function AIRBOSS:SetMenuSingleHuman(switch)
+  if switch==true or switch==nil then
+    self.humansingle=true
+  else
+    self.humansingle=false
   end
   return self
 end
@@ -6113,7 +6130,7 @@ function AIRBOSS:OnEventCrash(EventData)
     
     -- Get player flight.
     local flight=self.players[_playername]
-    
+    self:_RemoveF10Commands(EventData.IniUnitName)
     -- Remove flight completely from all queues and collapse marshal if necessary.
     if flight then
       self:_RemoveFlight(flight, true)
@@ -6154,7 +6171,7 @@ function AIRBOSS:OnEventEjection(EventData)
     self:T(self.lid..string.format("Player %s ejected!",_playername))
     -- Get player flight.
     local flight=self.players[_playername]
-    
+    self:_RemoveF10Commands(EventData.IniUnitName)    
     -- Remove flight completely from all queues and collapse marshal if necessary.
     if flight then
       self:_RemoveFlight(flight, true)
@@ -6199,7 +6216,7 @@ function AIRBOSS:_PlayerLeft(EventData)
 
     -- Get player flight.
     local flight=self.players[_playername]
-    
+    self:_RemoveF10Commands(EventData.IniUnitName)
     -- Remove flight completely from all queues and collapse marshal if necessary.
     if flight then
       self:_RemoveFlight(flight, true)
@@ -11463,6 +11480,7 @@ function AIRBOSS:_AddF10Commands(_unitName)
         
         -- Set menu root path.
         local _rootPath=nil
+        
         if AIRBOSS.MenuF10Root then
           ------------------------
           -- MISSON LEVEL MENUE --
@@ -11483,29 +11501,42 @@ function AIRBOSS:_AddF10Commands(_unitName)
           
           -- Main F10 menu: F10/Airboss/
           if AIRBOSS.MenuF10[gid]==nil then
-            AIRBOSS.MenuF10[gid]=missionCommands.addSubMenuForGroup(gid, "Airboss")
-          end
-          
-          
-          if self.menusingle then
-            -- F10/Airboss/...
-            _rootPath=AIRBOSS.MenuF10[gid]
-          else
-            -- F10/Airboss/<Carrier Alias>/...
-            _rootPath=missionCommands.addSubMenuForGroup(gid, self.alias, AIRBOSS.MenuF10[gid])
+          	AIRBOSS.MenuF10[gid]={}    
+    				AIRBOSS.MenuF10[gid].player={}
+            AIRBOSS.MenuF10[gid].menu_main=missionCommands.addSubMenuForGroup(gid, "Airboss")
           end
           
         end
         
+        local _playerPath=nil
+    
+        if self.humansingle then
+          -- F10/Airboss/...
+        	_playerPath=AIRBOSS.MenuF10[gid].menu_main
+        else
+          -- F10/Airboss/<playerName>/...
+          local uid=_unit:GetDCSObject():getID()
+          AIRBOSS.MenuF10[gid].player[uid]={}
+          AIRBOSS.MenuF10[gid].player[uid].menu_own=missionCommands.addSubMenuForGroup(gid,playername, AIRBOSS.MenuF10[gid].menu_main)  
+        	_playerPath=AIRBOSS.MenuF10[gid].player[uid].menu_own
+        end
+                  
+        if self.menusingle then
+          -- F10/Airboss/<playerName>/...
+          _rootPath=_playerPath
+        else
+          -- F10/Airboss/<playerName>/<Carrier Alias>/...
+          _rootPath=missionCommands.addSubMenuForGroup(gid, self.alias, _playerPath)
+        end
         
         --------------------------------        
-        -- F10/Airboss/<Carrier>/F1 Help
+        -- F10/Airboss/<playerName>/<Carrier>/F1 Help
         --------------------------------
         local _helpPath=missionCommands.addSubMenuForGroup(gid, "Help", _rootPath)
-        -- F10/Airboss/<Carrier>/F1 Help/F1 Mark Zones
+        -- F10/Airboss/<playerName>/<Carrier>/F1 Help/F1 Mark Zones
         if self.menumarkzones then
           local _markPath=missionCommands.addSubMenuForGroup(gid, "Mark Zones", _helpPath)
-          -- F10/Airboss/<Carrier>/F1 Help/F1 Mark Zones/
+          -- F10/Airboss/<playerName>/<Carrier>/F1 Help/F1 Mark Zones/
           if self.menusmokezones then
           missionCommands.addCommandForGroup(gid, "Smoke Pattern Zones", _markPath, self._MarkCaseZones,   self, _unitName, false)  -- F1
           end
@@ -11515,13 +11546,13 @@ function AIRBOSS:_AddF10Commands(_unitName)
           end
           missionCommands.addCommandForGroup(gid, "Flare Marshal Zone",  _markPath, self._MarkMarshalZone, self, _unitName, true)   -- F4
         end
-        -- F10/Airboss/<Carrier>/F1 Help/F2 Skill Level
+        -- F10/Airboss/<playerName>/<Carrier>/F1 Help/F2 Skill Level
         local _skillPath=missionCommands.addSubMenuForGroup(gid, "Skill Level", _helpPath)
-        -- F10/Airboss/<Carrier>/F1 Help/F2 Skill Level/
+        -- F10/Airboss/<playerName>/<Carrier>/F1 Help/F2 Skill Level/
         missionCommands.addCommandForGroup(gid, "Flight Student",  _skillPath, self._SetDifficulty, self, playername, AIRBOSS.Difficulty.EASY)   -- F1
         missionCommands.addCommandForGroup(gid, "Naval Aviator",   _skillPath, self._SetDifficulty, self, playername, AIRBOSS.Difficulty.NORMAL) -- F2
         missionCommands.addCommandForGroup(gid, "TOPGUN Graduate", _skillPath, self._SetDifficulty, self, playername, AIRBOSS.Difficulty.HARD)   -- F3
-        -- F10/Airboss/<Carrier>/F1 Help/
+        -- F10/Airboss/<playerName>/<Carrier>/F1 Help/
         missionCommands.addCommandForGroup(gid, "My Status",           _helpPath, self._DisplayPlayerStatus, self, _unitName)   -- F3
         missionCommands.addCommandForGroup(gid, "Attitude Monitor",    _helpPath, self._DisplayAttitude,     self, _unitName)   -- F4
         missionCommands.addCommandForGroup(gid, "Radio Check LSO",     _helpPath, self._LSORadioCheck,       self, _unitName)   -- F5
@@ -11529,16 +11560,16 @@ function AIRBOSS:_AddF10Commands(_unitName)
         missionCommands.addCommandForGroup(gid, "Subtitles On/Off",    _helpPath, self._SubtitlesOnOff,      self, _unitName)   -- F7
 
         -------------------------------------
-        -- F10/Airboss/<Carrier>/F2 Kneeboard
+        -- F10/Airboss/<playerName>/<Carrier>/F2 Kneeboard
         -------------------------------------
         local _kneeboardPath=missionCommands.addSubMenuForGroup(gid, "Kneeboard", _rootPath)        
-        -- F10/Airboss/<Carrier>/F2 Kneeboard/F1 Results
+        -- F10/Airboss/<playerName>/<Carrier>/F2 Kneeboard/F1 Results
         local _resultsPath=missionCommands.addSubMenuForGroup(gid, "Results", _kneeboardPath)
-        -- F10/Airboss/<Carrier>/F2 Kneeboard/F1 Results/
+        -- F10/Airboss/<playerName>/<Carrier>/F2 Kneeboard/F1 Results/
         missionCommands.addCommandForGroup(gid, "Greenie Board", _resultsPath, self._DisplayScoreBoard,   self, _unitName) -- F1
         missionCommands.addCommandForGroup(gid, "My LSO Grades", _resultsPath, self._DisplayPlayerGrades, self, _unitName) -- F2
         missionCommands.addCommandForGroup(gid, "Last Debrief",  _resultsPath, self._DisplayDebriefing,   self, _unitName) -- F3
-        -- F10/Airboss/<Carrier/F2 Kneeboard/
+        -- F10/Airboss/<playerName>/<Carrier/F2 Kneeboard/
         missionCommands.addCommandForGroup(gid, "Carrier Info",     _kneeboardPath, self._DisplayCarrierInfo,    self, _unitName) -- F2
         missionCommands.addCommandForGroup(gid, "Weather Report",   _kneeboardPath, self._DisplayCarrierWeather, self, _unitName) -- F3
         missionCommands.addCommandForGroup(gid, "Set Section",      _kneeboardPath, self._SetSection,            self, _unitName) -- F4
@@ -11547,7 +11578,7 @@ function AIRBOSS:_AddF10Commands(_unitName)
         missionCommands.addCommandForGroup(gid, "Waiting Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, self.Qwaiting, "Waiting") -- F7
 
         -------------------------
-        -- F10/Airboss/<Carrier>/
+        -- F10/Airboss/<playerName>/<Carrier>/
         -------------------------
         missionCommands.addCommandForGroup(gid, "Request Marshal",    _rootPath, self._RequestMarshal,    self, _unitName) -- F3
         missionCommands.addCommandForGroup(gid, "Request Commence",   _rootPath, self._RequestCommence,   self, _unitName) -- F4
@@ -11555,13 +11586,57 @@ function AIRBOSS:_AddF10Commands(_unitName)
         missionCommands.addCommandForGroup(gid, "[Reset My Status]",  _rootPath, self._ResetPlayerStatus, self, _unitName) -- F6
       end
     else
-      self:E(self.lid..string.format("ERROR: Could not find group or group ID in AddF10Menu() function. Unit name: %s.", _unitName))
+      self:E(self.lid..string.format("ERROR: Could not find group or group ID in _AddF10Commands() function. Unit name: %s.", _unitName))
     end
   else
-    self:E(self.lid..string.format("ERROR: Player unit does not exist in AddF10Menu() function. Unit name: %s.", _unitName))
+    self:E(self.lid..string.format("ERROR: Player unit does not exist in _AddF10Commands() function. Unit name: %s.", _unitName))
   end
 
 end
+
+
+
+--- Remove menu commands for player.
+-- @param #AIRBOSS self
+-- @param #string _unitName Name of player unit.
+function AIRBOSS:_RemoveF10Commands(_unitName)
+  self:F(_unitName)
+  
+  -- Get player unit and name.
+  local _unit, playername = self:_GetPlayerUnitAndName(_unitName)
+  
+  -- Check for player unit.
+  if _unit and playername then
+
+    -- Get group and ID.
+    local group=_unit:GetGroup()
+    local gid=group:GetID()
+      
+    if group and gid then
+  
+      if self.menuadded[gid] then
+      	local uid=_unit:GetDCSObject():getID()
+      	missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].player[uid].menu_own)
+      	local countPlayerInGroup = 0
+		    for _ in pairs(AIRBOSS.MenuF10[gid].player) do countPlayerInGroup = countPlayerInGroup + 1 end
+		  
+		    if AIRBOSS.MenuF10[gid].menu_main and countPlayerInGroup==1 then
+		      missionCommands.removeItemForGroup(gid,self.group[gid].menu_main)
+		      AIRBOSS.MenuF10[gid]=nil
+		      self.menuadded[gid]=false
+		    end
+		  	AIRBOSS.MenuF10[gid].player[uid]=nil  
+      else
+      	self:E(self.lid..string.format("ERROR: Could not find menue for group ID in _RemoveF10Commands() function. Unit name: %s.", _unitName))
+      end
+    else
+      self:E(self.lid..string.format("ERROR: Could not find group or group ID in _RemoveF10Commands() function. Unit name: %s.", _unitName))
+    end
+  else
+    self:E(self.lid..string.format("ERROR: Player unit does not exist in _RemoveF10Commands() function. Unit name: %s.", _unitName))
+  end
+end
+
 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- ROOT MENU
