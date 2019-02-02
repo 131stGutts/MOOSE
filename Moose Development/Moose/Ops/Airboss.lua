@@ -175,6 +175,7 @@
 -- @field Core.Set#SET_GROUP squadsetAI AI groups in this set will be handled by the airboss.
 -- @field Core.Set#SET_GROUP excludesetAI AI groups in this set will be explicitly excluded from handling by the airboss and not forced into the Marshal pattern.
 -- @field #boolean menusingle If true, menu is optimized for a single carrier.
+-- @field #boolean humansingle If true, menu is optimized for a single human per group.
 -- @field #number collisiondist Distance up to which collision checks are done.
 -- @field #number Tmessage Default duration in seconds messages are displayed to players.
 -- @field #string soundfolder Folder within the mission (miz) file where airboss sound files are located.
@@ -1575,13 +1576,9 @@ AIRBOSS.Difficulty={
 -- @field #table MenuF10
 AIRBOSS.MenuF10={}
 
---- Airboss mission level F10 root menu.
--- @field #table MenuF10Root
-AIRBOSS.MenuF10Root=nil
-
 --- Airboss class version.
 -- @field #string version
-AIRBOSS.version="0.9.3"
+AIRBOSS.version="0.9.4"
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- TODO list
@@ -4282,14 +4279,25 @@ function AIRBOSS:_WaitPlayer(playerData)
     playerData.step=AIRBOSS.PatternStep.WAITING
     playerData.warning=nil
     
-    -- Set all flights in section to waiting.
-    for _,_flight in pairs(playerData.section) do
-      local flight=_flight --#AIRBOSS.PlayerData
-      flight.step=AIRBOSS.PatternStep.WAITING
-      flight.time=timer.getAbsTime()
-      flight.warning=nil
-    end
-    
+
+    if self.humansingle then    
+        -- Set all flights in section to waiting.
+        for _,_flight in pairs(playerData.section) do
+          local flight=_flight --#AIRBOSS.PlayerData
+          flight.step=AIRBOSS.PatternStep.WAITING
+          flight.time=timer.getAbsTime()
+          flight.warning=nil
+        end
+    else
+        for _,_wingman in pairs(playerData.wingmen) do
+            local wingman = self.players[_wingman]
+            if wingman and wingman.name~=playerData.name then
+                wingman.step=AIRBOSS.PatternStep.WAITING
+                wingman.time=timer.getAbsTime()
+                wingman.warning=nil
+            end
+        end
+  end 
   end
   
 end
@@ -4313,17 +4321,28 @@ function AIRBOSS:_MarshalPlayer(playerData, stack)
     
     -- Holding switch to nil until player arrives in the holding zone.
     playerData.holding=nil
-    
-    -- Set same stack for all flights in section.
-    for _,_flight in pairs(playerData.section) do
-      -- TODO: inform section members.
-      local flight=_flight --#AIRBOSS.PlayerData
-      flight.case=playerData.case
-      flight.step=AIRBOSS.PatternStep.HOLDING
-      flight.holding=nil
-      flight.flag:Set(stack)
+
+    if self.humansingle then    
+        -- Set same stack for all flights in section.
+        for _,_flight in pairs(playerData.section) do
+          -- TODO: inform section members.
+          local flight=_flight --#AIRBOSS.PlayerData
+          flight.case=playerData.case
+          flight.step=AIRBOSS.PatternStep.HOLDING
+          flight.holding=nil
+          flight.flag:Set(stack)
+        end
+    else
+        for _,_wingman in pairs(playerData.wingmen) do
+            local wingman = self.players[_wingman]            
+            if wingman and wingman.name~=playerData.name then
+                wingman.case=playerData.case
+                wingman.step=AIRBOSS.PatternStep.HOLDING
+                wingman.holding=nil
+                wingman.flag:Set(stack)
+            end
+        end
     end
-    
   else
     self:E(self.lid.."ERROR: Could not add player to Marshal stack! playerData=nil")  
   end  
@@ -5216,7 +5235,8 @@ function AIRBOSS:_CreateFlightGroup(group)
     flight.section={}
     flight.ballcall=false
     flight.holding=nil
-    
+    flight.leader=flight.seclead
+    flight.wingmen={}    
     -- TODO Name should also be set for AI as it is used to get the section lead. Switch this from PlayerData to FlightGroup enumerator.
     flight.name=flight.group:GetUnit(1):GetName()
     
@@ -5251,6 +5271,54 @@ function AIRBOSS:_CreateFlightGroup(group)
     -- Add to known flights.
     table.insert(self.flights, flight)
     
+  elseif not self.humansingle then
+    -- An other human has pop in group
+    local existingFlight=self:_GetFlightFromGroupInQueue(group, self.flights)
+    existingFlight.nunits=#group:GetUnits()
+    existingFlight.onboardnumbers=self:_GetOnboardNumbers(group)
+    local units=group:GetUnits()
+    local text=string.format("Flight elements of group %s:", existingFlight.groupname)
+    for i,_unit in pairs(units) do
+      local unit=_unit --Wrapper.Unit#UNIT
+      local name=unit:GetName()      
+      local element={} --#AIRBOSS.FlightElement
+      local _element = self:_GetFlightElement(name,existingFlight)
+      local existingElement = false
+      if _element ~= nil then
+        element = _element
+        existingElement = true
+      end
+      element.unit=unit
+      element.onboard=existingFlight.onboardnumbers[name]
+      element.ballcall=false
+      element.ai=not self:_IsHumanUnit(unit)
+      text=text..string.format("\n[%d] %s onboard #%s, AI=%s", i, name, tostring(element.onboard), tostring(element.ai))
+      self:T(self.lid..text)  
+      if not existingElement then
+        table.insert(existingFlight.elements, element)
+      end
+    end
+    flight.group=existingFlight.group
+    flight.groupname=existingFlight.groupname
+    flight.nunits=existingFlight.nunits
+    flight.time=existingFlight.timer
+    flight.dist0=existingFlight.dist0
+    flight.flag=existingFlight.flag
+    flight.ai=existingFlight.ai
+    flight.actype=existingFlight.actype
+    flight.onboardnumbers=existingFlight.onboardnumbers
+    flight.seclead=existingFlight.seclead
+    flight.leader=existingFlight.leader
+    flight.wingmen=existingFlight.wingmen
+    flight.section=existingFlight.section
+    flight.ballcall=existingFlight.ballcall
+    flight.holding=existingFlight.holding
+    flight.elements=existingFlight.elements
+    -- TODO Name should also be set for AI as it is used to get the section lead. Switch this from PlayerData to FlightGroup enumerator.
+    flight.name=existingFlight.name
+    -- Note, this should be re-set elsewhere!
+    flight.case=existingFlight.case
+    --No flight insertion because one is already in the place
   else
     self:E(self.lid..string.format("ERROR: Flight group %s already exists in self.flights!", group:GetName()))
     return nil
@@ -5278,13 +5346,23 @@ function AIRBOSS:_NewPlayer(unitname)
     
     -- Create a flight group for the player.
     playerData=self:_CreateFlightGroup(group)
-    
+    if not playerData then
+        return nil
+    end
     -- Player unit, client and callsign.
+    playerData.group    = group
     playerData.unit     = playerunit
     playerData.name     = playername
     playerData.callsign = playerData.unit:GetCallsign()
     playerData.client   = CLIENT:FindByName(unitname, nil, true)
-    playerData.seclead  = playername
+    if self.humansingle then
+        playerData.seclead  = playername
+    elseif playerData.leader == playerData.group:GetUnit(1):GetName() and not playerData.ai then
+        playerData.leader = playername
+        table.insert(playerData.wingmen,playername) 
+    else    
+        table.insert(playerData.wingmen,playername) 
+    end    
         
     -- Number of passes done by player in this slot.
     playerData.passes=0 --playerData.passes or 0
@@ -5317,7 +5395,6 @@ function AIRBOSS:_NewPlayer(unitname)
     
     -- Welcome player message.
     self:MessageToPlayer(playerData, string.format("Welcome, %s %s!", playerData.difficulty, playerData.name), string.format("AIRBOSS %s", self.alias), "", 5)
-        
     -- Return player data table.
     return playerData    
   end
@@ -5407,7 +5484,7 @@ function AIRBOSS:_GetFlightElement(unitname, flight)
   return nil, nil
 end
 
---- Get element in flight. 
+--- Remove element in flight. 
 -- @param #AIRBOSS self
 -- @param #string unitname Name of the unit.
 -- @param #AIRBOSS.FlightGroup flight Flight group.
@@ -5422,6 +5499,47 @@ function AIRBOSS:_RemoveFlightElement(unitname, flight)
     return true
   else
     self:T("WARNING: Flight element could not be removed from flight group. Index=nil!")
+    return nil
+  end
+end
+
+
+--- Get wingmen in flight. 
+-- @param #AIRBOSS self
+-- @param #string unitname Name of the unit.
+-- @param #AIRBOSS.FlightGroup flight Flight group.
+-- @return #AIRBOSS.FlightElement Flight element.
+-- @return #number Element index.
+function AIRBOSS:_GetFlightWingmen(unitname, flight)
+
+  -- Loop over all elements in flight group.
+  for i,_wingman in pairs(flight.wingmen) do
+    local wingman=_wingman --#AIRBOSS.FlightElement
+    
+    if wingman.unit:GetName()==unitname then
+      return wingman, i
+    end
+  end
+  
+  self:T2(self.lid..string.format("WARNING: Flight wingman %s could not be found in flight group.", unitname, flight.groupname))
+  return nil, nil
+end
+
+--- Remove wingmen in flight. 
+-- @param #AIRBOSS self
+-- @param #string unitname Name of the unit.
+-- @param #AIRBOSS.FlightGroup flight Flight group.
+-- @return #boolean If true, element could be removed or nil otherwise.
+function AIRBOSS:_RemoveFlightWingmen(unitname, flight)
+
+  -- Get table index.
+  local element,idx=self:_GetFlightWingmen(unitname, flight)
+
+  if idx then
+    table.remove(flight.wingmen, idx)
+    return true
+  else
+    self:T("WARNING: Flight wingmen could not be removed from flight group. Index=nil!")
     return nil
   end
 end
@@ -5569,7 +5687,7 @@ function AIRBOSS:_RemoveUnitFromFlight(unit)
       
       -- Check if flight exists.
       if flight then
-
+        self:_RemoveFlightWingmen(unit:GetName(), flight)
         -- Remove element from flight group.
         local removed=self:_RemoveFlightElement(unit:GetName(), flight)
         
@@ -5869,7 +5987,7 @@ function AIRBOSS:_CheckMissedStepOnEntry(playerData)
       if inzone and math.abs(relheading)<60 then
   
         -- Player is in one of the initial zones short before the landing pattern.
-        local text=string.format("you missed an important step in the pattern!\nYour next step would have been %s.", playerData.step)
+        local text=string.format("%s, you missed an important step in the pattern!\nYour next step would have been %s.", playerData.name, playerData.step)
         self:MessageToPlayer(playerData, text, "AIRBOSS", nil, 5)
       
         if playerData.case==2 then
@@ -6352,6 +6470,7 @@ function AIRBOSS:_Holding(playerData)
 
   -- Message text.
   local text=""
+  local startText=string.format("%s, ",playerData.name)
   
   -- Different cases
   if playerData.holding==true then
@@ -6363,7 +6482,7 @@ function AIRBOSS:_Holding(playerData)
     else
       -- Player left the holding zone.
       self:T("Player just left the holding zone. Come back!")
-      text=text..string.format("You just left the holding zone. Watch your numbers!")
+      text=startText..string.format("You just left the holding zone. Watch your numbers!")
       playerData.holding=false
     end
     
@@ -6374,7 +6493,11 @@ function AIRBOSS:_Holding(playerData)
       
         -- Issue warning for being too high.
         if not playerData.warning then
-          text=text..string.format("You left your assigned altitude. Descent to angels %d.", angels)
+          if text ~= "" then
+            text=text..string.format("You left your assigned altitude. Descent to angels %d.", angels)
+          else
+            text=startText..string.format("You left your assigned altitude. Descent to angels %d.", angels)
+          end
           playerData.warning=true
         end
         
@@ -6382,7 +6505,11 @@ function AIRBOSS:_Holding(playerData)
   
         -- Issue warning for being too low.
         if not playerData.warning then
-          text=text..string.format("You left your assigned altitude. Climb to angels %d.", angels)
+          if text ~= "" then
+            text=text..string.format("You left your assigned altitude. Climb to angels %d.", angels)
+          else
+            text=startText..string.format("You left your assigned altitude. Climb to angels %d.", angels)
+          end
           playerData.warning=true
         end
         
@@ -6392,7 +6519,11 @@ function AIRBOSS:_Holding(playerData)
     
     -- Back to assigned altitude.
     if playerData.warning and math.abs(altdiff)<=altback then
-      text=text..string.format("Altitude is looking good again.")
+      if text ~= "" then
+        text=text..string.format("Altitude is looking good again.")
+      else
+        text=startText..string.format("Altitude is looking good again.")
+      end
       playerData.warning=nil
     end
     
@@ -6402,7 +6533,11 @@ function AIRBOSS:_Holding(playerData)
     if inholdingzone then
       -- Player is back in the holding zone.
       self:T("Player is back in the holding zone after leaving it.")
-      text=text..string.format("You are back in the holding zone. Now stay there!")
+      if text ~= "" then
+        text=text..string.format("You are back in the holding zone. Now stay there!")
+      else
+        text=startText..string.format("You are back in the holding zone. Now stay there!")
+      end
       playerData.holding=true
     else
       -- Player is still outside the holding zone.
@@ -6421,7 +6556,11 @@ function AIRBOSS:_Holding(playerData)
       self:T("Player entered the holding zone for the first time.")
       
       -- Inform player.
-      text=text..string.format("You arrived at the holding zone.")
+      if text ~= "" then
+        text=text..string.format("You arrived at the holding zone.")
+      else
+        text=startText..string.format("You arrived at the holding zone.")
+      end
       
       -- Feedback on altitude.
       if goodalt then
@@ -6489,7 +6628,7 @@ function AIRBOSS:_Commencing(playerData, zonecheck)
   if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
 
     -- Text  
-    local text=""
+    local text=string.format("%s, ",playerData.name)
     
     -- Positive response.
     if playerData.case==1 then
@@ -6518,13 +6657,22 @@ function AIRBOSS:_Commencing(playerData, zonecheck)
     
   -- Next step hint.
   self:_SetPlayerStep(playerData, nextstep)
-  
-  -- Commence section members as well but dont check the zone.
-  for i,_flight in pairs(playerData.section) do
-    local flight=_flight --#AIRBOSS.PlayerData
-    self:_Commencing(flight, false)
+  if self.humansingle then
+    -- Commence section members as well but dont check the zone.
+    for i,_flight in pairs(playerData.section) do
+      local flight=_flight --#AIRBOSS.PlayerData
+      self:_Commencing(flight, false)
+    end
+  else
+    if playerData.name == playerData.leader then
+        for i,_wingman in pairs(playerData.wingmen) do
+            local wingman= self.players[_wingman]
+            if wingman and wingman.name~=playerData.name then
+               self:_Commencing(wingman, false) 
+            end
+        end
+    end
   end
-  
 end
 
 --- Start pattern when player enters the initial zone in case I/II recoveries.
@@ -6546,7 +6694,7 @@ function AIRBOSS:_Initial(playerData)
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
     
       -- Inform player.
-      local hint=string.format("Initial")
+      local hint=string.format("%s: Initial", playerData.name)
       
       -- Hook down for students.
       if playerData.difficulty==AIRBOSS.Difficulty.EASY then
@@ -6578,13 +6726,13 @@ function AIRBOSS:_CheckCorridor(playerData)
   
   -- Issue warning.
   if invalid and (not playerData.warning) then
-    self:MessageToPlayer(playerData, "You left the approach corridor!", "AIRBOSS")
+    self:MessageToPlayer(playerData, string.format("%s, You left the approach corridor!",playerData.name), "AIRBOSS")
     playerData.warning=true
   end
   
   -- Back in zone.
   if (not invalid) and playerData.warning then
-    self:MessageToPlayer(playerData, "You're back in the approach corridor.", "AIRBOSS")
+    self:MessageToPlayer(playerData, string.format("%s, You're back in the approach corridor.", playerData.name), "AIRBOSS")
     playerData.warning=false
   end  
 
@@ -6673,7 +6821,7 @@ function AIRBOSS:_ArcInTurn(playerData)
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
     
       -- Hint speed.
-      local hint=string.format("%s\n%s", playerData.step, hintSpeed)
+      local hint=string.format("%s\n%s\n%s", playerData.name, playerData.step, hintSpeed)
             
       -- Hint turn and set TACAN.
       if playerData.difficulty==AIRBOSS.Difficulty.EASY then
@@ -6721,7 +6869,7 @@ function AIRBOSS:_ArcOutTurn(playerData)
 
     -- Message to player.
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
-      local hint=string.format("%s\n%s", playerData.step, hintSpeed)
+      local hint=string.format("%s\n%s\n%s", playerData.name, playerData.step, hintSpeed)
       self:MessageToPlayer(playerData, hint, "MARSHAL", "")
     end
         
@@ -6770,7 +6918,7 @@ function AIRBOSS:_DirtyUp(playerData)
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
     
       -- Hint alt and speed.
-      local hint=string.format("%s\n%s\n%s", playerData.step, hintAlt, hintSpeed)
+      local hint=string.format("%s\n%s\n%s\n%s", playerData.name, playerData.step, hintAlt, hintSpeed)
       
       -- Hint turn and set TACAN.
       if playerData.difficulty==AIRBOSS.Difficulty.EASY then
@@ -6828,7 +6976,7 @@ function AIRBOSS:_Bullseye(playerData)
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
       
       -- Hint alt and aoa.
-      local hint=string.format("%s\n%s\n%s", playerData.step, hintAlt, hintAoA)
+      local hint=string.format("%s\n: %s\n%s\n%s", playerData.name, playerData.step, hintAlt, hintAoA)
       
       -- Hint follow the needles.
       if playerData.difficulty==AIRBOSS.Difficulty.EASY then
@@ -6905,7 +7053,7 @@ function AIRBOSS:_BreakEntry(playerData)
     
     -- Message to player.
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
-      local hint=string.format("%s\n%s\n%s", playerData.step, hintAlt, hintSpeed)
+      local hint=string.format("%s\n%s\n%s\n%s", playerData.name, playerData.step, hintAlt, hintSpeed)
       self:MessageToPlayer(playerData, hint, "MARSHAL", "")
     end
 
@@ -6950,14 +7098,14 @@ function AIRBOSS:_Break(playerData, part)
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
     
       -- Hint alt.
-      local hint=string.format("%s %s", playerData.step, hint)
+      local hintD=string.format("%s:  %s %s", playerData.name, playerData.step, hint)
             
       -- Hint dirty up.
       if playerData.difficult==AIRBOSS.Difficulty.EASY and part==AIRBOSS.PatternStep.LATEBREAK then
-        hint=hint.."\nDirty up! Gear down, flaps down. Check hook down."
+        hintD=hintD.."\nDirty up! Gear down, flaps down. Check hook down."
       end
       
-      self:MessageToPlayer(playerData, hint, "MARSHAL", "")
+      self:MessageToPlayer(playerData, hintD, "MARSHAL", "")
     end
 
     -- Debrief
@@ -6972,6 +7120,15 @@ function AIRBOSS:_Break(playerData, part)
     end
     
     self:_SetPlayerStep(playerData, nextstep)
+    if not self.humansingle then
+        for _,_wingman in pairs(playerData.wingmen) do
+            local wingman = self.players[_wingman]
+            if wingman and wingman.name~=playerData.name then
+                -- Now each element are scan individually
+                self:_SetPlayerStep(wingman, nextstep)
+            end
+        end        
+    end
   end
 end
 
@@ -7041,7 +7198,7 @@ function AIRBOSS:_Abeam(playerData)
     
     -- Message to player.
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
-      local hint=string.format("%s\n%s\n%s\n%s", playerData.step, hintAlt, hintAoA, hintDist)
+      local hint=string.format("%s\n%s\n%s\n%s\n%s", playerData.name, playerData.step, hintAlt, hintAoA, hintDist)
       self:MessageToPlayer(playerData, hint, "LSO", "")
     end
 
@@ -7088,7 +7245,7 @@ function AIRBOSS:_Ninety(playerData)
 
     -- Message to player.
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
-      local hint=string.format("%s\n%s\n%s", playerData.step, hintAlt, hintAoA)
+      local hint=string.format("%s\n%s\n%s\n%s", playerData.name, playerData.step, hintAlt, hintAoA)
       self:MessageToPlayer(playerData, hint, "LSO", "")
     end
     
@@ -7103,7 +7260,7 @@ function AIRBOSS:_Ninety(playerData)
     
   elseif relheading>90 and self:_CheckLimits(X, Z, self.Wake) then
     -- Message to player.
-    self:MessageToPlayer(playerData, "You are already at the wake and have not passed the 90. Turn faster next time!", "LSO")
+    self:MessageToPlayer(playerData, string.format("%s, You are already at the wake and have not passed the 90. Turn faster next time!",playerData.name), "LSO")
     --TODO: pattern WO?
   end
 end
@@ -7136,7 +7293,7 @@ function AIRBOSS:_Wake(playerData)
 
     -- Message to player.
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
-      local hint=string.format("%s\n%s\n%s", playerData.step, hintAlt, hintAoA)
+      local hint=string.format("%s\n%s\n%s\n%s", playerData.name, playerData.step, hintAlt, hintAoA)
       self:MessageToPlayer(playerData, hint, "LSO", "")
     end    
     
@@ -7189,7 +7346,7 @@ function AIRBOSS:_Final(playerData)
     
     -- Message to player.
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
-      local hint=string.format("%s\n%s\n%s", playerData.step, hintAlt, hintAoA)
+      local hint=string.format("%s\n%s\n%s\n%s", playerData.name, playerData.step, hintAlt, hintAoA)
       self:MessageToPlayer(playerData, hint, "LSO", "")
     end        
 
@@ -7611,7 +7768,7 @@ function AIRBOSS:_CheckFoulDeck(playerData)
     
     -- Player hint for flight students.
     if playerData.difficulty~=AIRBOSS.Difficulty.HARD then
-      local text=string.format("overfly landing area and enter bolter pattern.")
+      local text=string.format("%s, overfly landing area and enter bolter pattern.",playerData.name)
       self:MessageToPlayer(playerData, text, "LSO", nil, nil, false, 3)
     end    
     
@@ -7623,10 +7780,11 @@ function AIRBOSS:_CheckFoulDeck(playerData)
     
     -- Send a message to the player that blocks the runway.
     if foulunit then
-      local foulflight=self:_GetFlightFromGroupInQueue(foulunit:GetGroup(), self.flights)
-      if foulflight and not foulflight.ai then
-        self:MessageToPlayer(foulflight, "move your ass from my runway. NOW!", "AIRBOSS")
-      end
+        local _unitFoul, _unitFoulName=self:_GetPlayerUnitAndName(foulunit:GetName())
+        local foulData = self.players[_unitFoulName]
+        if foulData  and not foulData.ai then
+            self:MessageToPlayer(foulData, string.format("%s, move your ass from my runway. NOW!",foulData.name), "AIRBOSS")
+        end
     end
   end
 
@@ -7790,7 +7948,7 @@ function AIRBOSS:_Trapped(playerData)
     playerData.wire=wire
     
     -- Message to player.    
-    local text=string.format("Trapped %d-wire.", wire)
+    local text=string.format("%s:\nTrapped %d-wire.", playerData.name,wire)
     if wire==3 then
       text=text.." Well done!"
     elseif wire==2 then
@@ -8312,7 +8470,8 @@ function AIRBOSS:_AttitudeMonitor(playerData)
   end  
  
   -- Output
-  local text=string.format("Pattern step: %s", step) 
+  local text=string.format("Altitude monitoring for %s: \n",playerData.name)
+  text=text..string.format("Pattern step: %s", step) 
   text=text..string.format("\nAoA=%.1f° | |V|=%.1f knots", aoa, UTILS.MpsToKnots(vabs))
   if self.Debug then
     -- Velocity vector.
@@ -8930,7 +9089,8 @@ function AIRBOSS:_LSOgrade(playerData)
   G=G:gsub("__","")  
   
   -- Debug info
-  local text="LSO grade:\n"
+  local text=string.format("Status for %s:\n",playerData.name)
+  text=text.."LSO grade:\n"
   text=text..G.."\n"
   text=text.."Grade = "..grade.." points = "..points.."\n"
   text=text.."# of total deviations   = "..N.."\n"
@@ -9093,7 +9253,8 @@ function AIRBOSS:_Flightdata2Text(playerData, groovestep)
   end
   
   -- Debug info.
-  local text=string.format("LSO Grade at %s:\n", step)
+  local text=string.format("Status for %s: \n",playerData.name)
+  text=text..string.format("LSO Grade at %s:\n", step)
   text=text..string.format("AOA=%.1f\n",AOA)
   text=text..string.format("GSE=%.1f\n",GSE)
   text=text..string.format("LUE=%.1f\n",LUE)
@@ -9339,7 +9500,7 @@ function AIRBOSS:_AltitudeCheck(playerData, altopt)
   -- Radio call for flight students.
   local radiocall=nil --#AIRBOSS.RadioCall
  
-  local hint=""
+  local hint=string.format("%s, ", playerData.name)
   local loud=false
   if _error>badscore then
     --hint=string.format("You're high.")
@@ -9356,7 +9517,7 @@ function AIRBOSS:_AltitudeCheck(playerData, altopt)
     --hint=string.format("You're slightly low.")
     radiocall=self:_NewRadioCall(AIRBOSS.LSOCall.LOW, nil, nil, 5)
   else
-    hint=string.format("Good altitude.")
+    hint=hint..string.format("Good altitude.")
   end
   
   -- Extend or decrease depending on skill.
@@ -9400,17 +9561,17 @@ function AIRBOSS:_DistanceCheck(playerData, optdist)
   -- Altitude error +-X%
   local _error=(distance-optdist)/optdist*100
   
-  local hint
+  local hint=string.format("%s, ", playerData.name)
   if _error>badscore then
-    hint=string.format("You're too far from the boat!")
+    hint=hint..string.format("You're too far from the boat!")
   elseif _error>lowscore then 
-    hint=string.format("You're slightly too far from the boat.")
+    hint=hint..string.format("You're slightly too far from the boat.")
   elseif _error<-badscore then
-    hint=string.format( "You're too close to the boat!")
+    hint=hint..string.format( "You're too close to the boat!")
   elseif _error<-lowscore then
-    hint=string.format("You're slightly too far from the boat.")
+    hint=hint..string.format("You're slightly too far from the boat.")
   else
-    hint=string.format("Good distance to the boat.")
+    hint=hint..string.format("Good distance to the boat.")
   end
   
   -- Extend or decrease depending on skill.
@@ -9458,7 +9619,7 @@ function AIRBOSS:_AoACheck(playerData, optaoa)
   local radiocall=nil --#AIRBOSS.RadioCall
 
   -- Rate aoa.
-  local hint=""
+  local hint=string.format("%s, ", playerData.name)
   local loud=false
   if aoa>=aircraftaoa.SLOW then
     --hint="Your're slow!"
@@ -9468,11 +9629,11 @@ function AIRBOSS:_AoACheck(playerData, optaoa)
     --hint="Your're slow."
     radiocall=self:_NewRadioCall(AIRBOSS.LSOCall.SLOW, nil, nil, 5)
   elseif aoa>=aircraftaoa.OnSpeedMax then
-    hint="Your're a little slow."
+    hint=hint.."Your're a little slow."
   elseif aoa>=aircraftaoa.OnSpeedMin then
-    hint="You're on speed."
+    hint=hint.."You're on speed."
   elseif aoa>=aircraftaoa.Fast then
-    hint="You're a little fast."
+    hint=hint.."You're a little fast."
   elseif aoa>=aircraftaoa.FAST then
     --hint="Your're fast."
     radiocall=self:_NewRadioCall(AIRBOSS.LSOCall.FAST, nil, nil, 5)
@@ -9494,7 +9655,9 @@ function AIRBOSS:_AoACheck(playerData, optaoa)
     -- No hint at all for the pros.
     hint=""
   end
-  
+  if hint == string.format("%s, ", playerData.name) then
+    hint = ""
+  end
   -- Debriefing text.
   local debrief=string.format("AoA %.1f = %d%% deviation from %.1f.", self:_AoADeg2Units(playerData, aoa), _error, self:_AoADeg2Units(playerData, optaoa))
   
@@ -9525,7 +9688,7 @@ function AIRBOSS:_SpeedCheck(playerData, speedopt)
     -- Radio call for flight students.
   local radiocall=nil --#AIRBOSS.RadioCall  
   
-  local hint=""
+  local hint=string.format("%s, ", playerData.name)
   local loud=false
   if _error>badscore then
     --hint=string.format("You're fast.")
@@ -9542,7 +9705,7 @@ function AIRBOSS:_SpeedCheck(playerData, speedopt)
     radiocall=self:_NewRadioCall(AIRBOSS.LSOCall.SLOW, "AIRBOSS", nil, 5)
     loud=true
   else
-    hint=string.format("Good speed.")
+    hint=hint..string.format("Good speed.")
   end
   
   -- Extend or decrease depending on skill.
@@ -9557,6 +9720,9 @@ function AIRBOSS:_SpeedCheck(playerData, speedopt)
     hint=""
   end
   
+  if hint == string.format("%s, ", playerData.name) then
+    hint = ""
+  end
   -- Debrief text.
   local debrief=string.format("Speed %d knots = %d%% deviation from %d knots.", UTILS.MpsToKnots(speed), _error, UTILS.MpsToKnots(speedopt))
   
@@ -11451,6 +11617,7 @@ function AIRBOSS:_Number2Radio(radio, number, delay)
   return wait
 end
 
+
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- RADIO MENU Functions
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -11463,7 +11630,6 @@ function AIRBOSS:_AddF10Commands(_unitName)
   
   -- Get player unit and name.
   local _unit, playername = self:_GetPlayerUnitAndName(_unitName)
-  
   -- Check for player unit.
   if _unit and playername then
 
@@ -11472,53 +11638,38 @@ function AIRBOSS:_AddF10Commands(_unitName)
     local gid=group:GetID()
       
     if group and gid then
-  
+    
+    
       if not self.menuadded[gid] then
       
         -- Enable switch so we don't do this twice.
         self.menuadded[gid]=true
-        
-        -- Set menu root path.
-        local _rootPath=nil
-        
-        if AIRBOSS.MenuF10Root then
-          ------------------------
-          -- MISSON LEVEL MENUE --
-          ------------------------          
-           
-          if self.menusingle then
-            -- F10/Airboss/...
-            _rootPath=AIRBOSS.MenuF10Root
-          else
-            -- F10/Airboss/<Carrier Alias>/...
-            _rootPath=missionCommands.addSubMenuForGroup(gid, self.alias, AIRBOSS.MenuF10Root)
-          end
-         
-        else
+
           ------------------------
           -- GROUP LEVEL MENUES --
           ------------------------
           
           -- Main F10 menu: F10/Airboss/
           if AIRBOSS.MenuF10[gid]==nil then
-          	AIRBOSS.MenuF10[gid]={}    
-    				AIRBOSS.MenuF10[gid].player={}
+            AIRBOSS.MenuF10[gid]={}    
+            AIRBOSS.MenuF10[gid].player={}
             AIRBOSS.MenuF10[gid].menu_main=missionCommands.addSubMenuForGroup(gid, "Airboss")
           end
-          
-        end
-        
+      end  
+      local uid=_unit:GetDCSObject():getID()
+      if not AIRBOSS.MenuF10[gid].player[uid] then
+        -- Set menu root path.
+        local _rootPath=nil
         local _playerPath=nil
     
         if self.humansingle then
           -- F10/Airboss/...
-        	_playerPath=AIRBOSS.MenuF10[gid].menu_main
+          _playerPath=AIRBOSS.MenuF10[gid].menu_main
         else
           -- F10/Airboss/<playerName>/...
-          local uid=_unit:GetDCSObject():getID()
           AIRBOSS.MenuF10[gid].player[uid]={}
           AIRBOSS.MenuF10[gid].player[uid].menu_own=missionCommands.addSubMenuForGroup(gid,playername, AIRBOSS.MenuF10[gid].menu_main)  
-        	_playerPath=AIRBOSS.MenuF10[gid].player[uid].menu_own
+          _playerPath=AIRBOSS.MenuF10[gid].player[uid].menu_own
         end
                   
         if self.menusingle then
@@ -11572,7 +11723,12 @@ function AIRBOSS:_AddF10Commands(_unitName)
         -- F10/Airboss/<playerName>/<Carrier/F2 Kneeboard/
         missionCommands.addCommandForGroup(gid, "Carrier Info",     _kneeboardPath, self._DisplayCarrierInfo,    self, _unitName) -- F2
         missionCommands.addCommandForGroup(gid, "Weather Report",   _kneeboardPath, self._DisplayCarrierWeather, self, _unitName) -- F3
-        missionCommands.addCommandForGroup(gid, "Set Section",      _kneeboardPath, self._SetSection,            self, _unitName) -- F4
+        -- No Section if we have more than one human in the same flight group
+        if self.humansingle then
+            missionCommands.addCommandForGroup(gid, "Set Section",      _kneeboardPath, self._SetSection,            self, _unitName) -- F4
+        else
+            missionCommands.addCommandForGroup(gid, "Set Leadership to me",      _kneeboardPath, self._SetLeadership,            self, _unitName) -- F4
+        end
         missionCommands.addCommandForGroup(gid, "Marshal Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, self.Qmarshal, "Marshal") -- F5
         missionCommands.addCommandForGroup(gid, "Pattern Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, self.Qpattern, "Pattern") -- F6
         missionCommands.addCommandForGroup(gid, "Waiting Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, self.Qwaiting, "Waiting") -- F7
@@ -11615,19 +11771,19 @@ function AIRBOSS:_RemoveF10Commands(_unitName)
     if group and gid then
   
       if self.menuadded[gid] then
-      	local uid=_unit:GetDCSObject():getID()
-      	missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].player[uid].menu_own)
-      	local countPlayerInGroup = 0
-		    for _ in pairs(AIRBOSS.MenuF10[gid].player) do countPlayerInGroup = countPlayerInGroup + 1 end
-		  
-		    if AIRBOSS.MenuF10[gid].menu_main and countPlayerInGroup==1 then
-		      missionCommands.removeItemForGroup(gid,self.group[gid].menu_main)
-		      AIRBOSS.MenuF10[gid]=nil
-		      self.menuadded[gid]=false
-		    end
-		  	AIRBOSS.MenuF10[gid].player[uid]=nil  
+        local uid=_unit:GetDCSObject():getID()
+        missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].player[uid].menu_own)
+        AIRBOSS.MenuF10[gid].player[uid]=nil  
+        local countPlayerInGroup = 0
+        for _ in pairs(AIRBOSS.MenuF10[gid].player) do countPlayerInGroup = countPlayerInGroup + 1 end
+      
+        if AIRBOSS.MenuF10[gid].menu_main and countPlayerInGroup==1 then
+          missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].menu_main)
+          AIRBOSS.MenuF10[gid]=nil
+          self.menuadded[gid]=false
+        end
       else
-      	self:E(self.lid..string.format("ERROR: Could not find menue for group ID in _RemoveF10Commands() function. Unit name: %s.", _unitName))
+        self:E(self.lid..string.format("ERROR: Could not find menue for group ID in _RemoveF10Commands() function. Unit name: %s.", _unitName))
       end
     else
       self:E(self.lid..string.format("ERROR: Could not find group or group ID in _RemoveF10Commands() function. Unit name: %s.", _unitName))
@@ -11656,17 +11812,20 @@ function AIRBOSS:_ResetPlayerStatus(_unitName)
     local playerData=self.players[_playername] --#AIRBOSS.PlayerData
         
     if playerData then
-      
-      -- Inform player.
-      local text="Status reset executed! You have been removed from all queues."
-      self:MessageToPlayer(playerData, text, "AIRBOSS")
-      
-      -- Remove flight from queues. Collapse marshal stack if necessary.
-      self:_RemoveFlight(playerData)
-      
-      -- Initialize player data.
-      self:_InitPlayer(playerData)
+      if not self.humansingle and playerData.leader~=playerData.name then
+        local text=string.format("negative %s, you've to remain with your leader",_playername)
+        self:MessageToPlayer(playerData, text, "AIRBOSS")          
+      else
+        -- Inform player.
+        local text="Status reset executed! You have been removed from all queues."
+        self:MessageToPlayer(playerData, text, "AIRBOSS")
         
+        -- Remove flight from queues. Collapse marshal stack if necessary.
+        self:_RemoveFlight(playerData)
+        
+        -- Initialize player data.
+        self:_InitPlayer(playerData)
+      end  
     end
   end
 end
@@ -11705,22 +11864,27 @@ function AIRBOSS:_RequestMarshal(_unitName)
           
         elseif self:_InQueue(self.Qwaiting, playerData.group) then
 
-          -- Flight group is already in pattern queue.
+          -- Flight group is already in waiting queue.
           local text=string.format("you are in the Waiting queue with %d flights ahead of you. Marshal request denied!", #self.Qwaiting)
           self:MessageToPlayer(playerData, text, "MARSHAL")
           
         elseif not _unit:InAir() then 
 
-          -- Flight group is already in pattern queue.
+          -- Flight group is on ground
           local text=string.format("you are not airborne. Marshal request denied!")
           self:MessageToPlayer(playerData, text, "MARSHAL")
           
-        elseif playerData.name~=playerData.seclead then
+        elseif self.humansingle and playerData.name~=playerData.seclead then
         
-          -- Flight group is already in pattern queue.
+          -- Unit is not section leader
           local text=string.format("negative, your section lead %s needs to request Marshal.", playerData.seclead)
           self:MessageToPlayer(playerData, text, "MARSHAL")        
         
+        elseif not self.humansingle and playerData.leader~=playerData.name then
+            
+          -- You're a wingman, not a leader, stay at your place!
+          text=string.format("negative, %s, your leader %s has to request Marshal!", playerData.name, playerData.leader)
+      
         else
         
           -- Get next free Marshal stack.
@@ -11787,13 +11951,18 @@ function AIRBOSS:_RequestCommence(_unitName)
           
         elseif not _unit:InAir() then 
 
-          -- Flight group is already in pattern queue.
+          -- Unit is on the ground
           text=string.format("negative, %s, you are not airborne.", playerData.name)
           
-        elseif playerData.seclead~=playerData.name then
+        elseif self.humansingle and playerData.seclead~=playerData.name then
 
-          -- Flight group is already in pattern queue.
+          -- You're a wingman, not a leader, stay at your place!
           text=string.format("negative, %s, your section leader %s has to request commence!", playerData.name, playerData.seclead)
+      
+        elseif not self.humansingle and playerData.leader~=playerData.name then
+            
+          -- You're a wingman, not a leader, stay at your place!
+          text=string.format("negative, %s, your leader %s has to request commence!", playerData.name, playerData.leader)
       
         elseif stack>1 then
 
@@ -11848,10 +12017,21 @@ function AIRBOSS:_RequestCommence(_unitName)
             end
             
             -- TODO: Inform section members.
-            
-            -- Set case of section members as well. Not sure if necessary any more since it is set as soon as the recovery case is changed.
-            for _,flight in pairs(playerData.section) do
-              flight.case=playerData.case
+            if self.humansingle then
+                -- Set case of section members as well. Not sure if necessary any more since it is set as soon as the recovery case is changed.
+                for _,flight in pairs(playerData.section) do
+                  flight.case=playerData.case
+                end
+            else
+                -- Set case of wingmen as well.
+                for _,_wingman in pairs(playerData.wingmen) do
+                    if _wingman~=playerData.name then
+                        local wingmanData=self.players[_wingman]
+                        if wingmanData then
+                            wingmanData.case=playerData.case
+                        end
+                    end
+                end
             end
             
             -- Add player to pattern queue. Usually this is done when the stack is collapsed but this player is not in the Marshal queue.
@@ -11912,7 +12092,7 @@ function AIRBOSS:_RequestRefueling(_unitName)
             local angels=self:_GetAngels(self.tanker.altitude)
           
             -- Tanker is up and running.
-            text=string.format("Proceed to tanker at angels %d.", angels)
+            text=string.format("%s, proceed to tanker at angels %d.", _playername, angels)
             
             -- State TACAN channel of tanker if defined.
             if self.tanker.TACANon then
@@ -11941,13 +12121,14 @@ function AIRBOSS:_RequestRefueling(_unitName)
           elseif self.tanker:IsReturning() then
             -- Tanker is RTB.
             text="Tanker is RTB. Request denied!\nWait for the tanker to be back on station if you can."
+            text=string.format("%s, tanker is RTB. Request denied!\nWait for the tanker to be back on station if you can..", _playername)
           end
           
         else
-          text="negative, you are not inside the CCA yet."
+          text=string.format("%s, negative, you are not inside the CCA yet.", _playername)
         end
       else
-        text="negative, no refueling tanker available."
+        text=string.format("%s, negative, negative, no refueling tanker available.", _playername)
       end
       
       -- Send message.
@@ -11956,6 +12137,25 @@ function AIRBOSS:_RequestRefueling(_unitName)
   end
 end
 
+--- Set leader value for me and my wingmen .
+-- @param #AIRBOSS self
+-- @param #string _unitName Name of the player unit.
+function AIRBOSS:_SetLeadership(_unitName)
+    
+  -- Get player unit and name.
+  local _unit, _playername = self:_GetPlayerUnitAndName(_unitName)
+  
+  -- Check if we have a unit which is a player.
+    if _unit and _playername then
+        local playerData=self.players[_playername] --#AIRBOSS.PlayerData
+        for _,wingman in pairs(playerData.wingmen) do
+            local _wingman = self.players[wingman]
+            if _wingman then
+                _wingman.leader=playerData.name
+            end
+        end
+    end
+end
 
 --- Remove a member from the player's section.
 -- @param #AIRBOSS self
@@ -12305,7 +12505,7 @@ function AIRBOSS:_DisplayDebriefing(_unitName)
     if playerData then
         
       -- Debriefing text.
-      local text=string.format("Debriefing:")
+      local text=string.format("Debriefing for %s: ",_playername)
      
       -- Check if data is present. 
       if #playerData.lastdebrief>0 then
@@ -12593,7 +12793,7 @@ function AIRBOSS:_SetDifficulty(playername, difficulty)
   
   if playerData then
     playerData.difficulty=difficulty
-    local text=string.format("your skill level is now: %s.", difficulty)
+    local text=string.format("%s, your skill level is now: %s.", playername, difficulty)
     self:MessageToPlayer(playerData, text, nil, playerData.name, 5)
   else
     self:E(self.lid..string.format("ERROR: Could not get player data for player %s.", playername))
@@ -12640,12 +12840,13 @@ function AIRBOSS:_SubtitlesOnOff(_unitname)
     if playerData then
       playerData.subtitles=not playerData.subtitles
       -- Inform player.
-      local text=""
+      local text=string.format("%s, ",playername)
       if playerData.subtitles==true then
-        text=string.format("subtitiles are now ON.")
+        text=text..string.format("subtitiles are now ON")
       elseif playerData.subtitles==false then
-        text=string.format("subtitiles are now OFF.")
+        text=text..string.format("subtitiles are now OFF")
       end
+      text=text..string.format(" for your aircraft.")
       self:MessageToPlayer(playerData, text, nil, playerData.name, 5)
     end
   end
@@ -12782,7 +12983,7 @@ function AIRBOSS:_MarkMarshalZone(_unitName, flare)
       
       local text=""
       if stack>0 then
-    
+        text=string.format("%s, we are ",_playername)
         -- Get current holding zone.
         local zoneHolding=self:_GetZoneHolding(case, stack)
         
@@ -12796,25 +12997,25 @@ function AIRBOSS:_MarkMarshalZone(_unitName, flare)
         patternalt=5
         
         if flare then
-          text=text.."Marking Marshal zone with WHITE flares."
+          text=text.."marking Marshal zone with WHITE flares."
           zoneHolding:FlareZone(FLARECOLOR.White, 45, nil, patternalt)
           
           if playerData.case==1 then
-            text=text.."\nMarking Commence zone with RED flares."
+            text=text.."\nmarking Commence zone with RED flares."
             zoneThree:FlareZone(FLARECOLOR.Red, 45, nil, patternalt)
           end          
         else
-          text="Marking Marshal zone with WHITE smoke."
+          text=text.."marking Marshal zone with WHITE smoke."
           zoneHolding:SmokeZone(SMOKECOLOR.White, 45, patternalt)
           
           if playerData.case==1 then
-            text=text.."\nMarking Commence zone with RED smoke."
+            text=text.."\nmarking Commence zone with RED smoke."
             zoneThree:SmokeZone(SMOKECOLOR.Red, 45, patternalt)
           end                    
         end
         
       else
-        text="You are currently not in a marshal stack. No zone to mark!"
+        text=string.format("%s, you are currently not in a marshal stack. No zone to mark!",_playername)
       end
       
       -- Send message to player.
@@ -12844,7 +13045,7 @@ function AIRBOSS:_MarkCaseZones(_unitName, flare)
       local case=playerData.case
       
       -- Initial 
-      local text=string.format("Marking CASE %d zones\n", case)
+      local text=string.format("Marking CASE %d zones for %s\n", case, _playername)
       
       -- Flare or smoke?
       if flare then
