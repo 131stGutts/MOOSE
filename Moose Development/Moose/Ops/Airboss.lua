@@ -1576,6 +1576,10 @@ AIRBOSS.Difficulty={
 -- @field #table MenuF10
 AIRBOSS.MenuF10={}
 
+--- Airboss mission level F10 root menu.	
+-- @field #table MenuF10Root	
+AIRBOSS.MenuF10Root=nil
+
 --- Airboss class version.
 -- @field #string version
 AIRBOSS.version="0.9.4"
@@ -11644,22 +11648,32 @@ function AIRBOSS:_AddF10Commands(_unitName)
       
         -- Enable switch so we don't do this twice.
         self.menuadded[gid]=true
-
-          ------------------------
-          -- GROUP LEVEL MENUES --
-          ------------------------
-          
-          -- Main F10 menu: F10/Airboss/
-          if AIRBOSS.MenuF10[gid]==nil then
+        
+            -- Main F10 menu: F10/Airboss/
+        if AIRBOSS.MenuF10[gid]==nil then
             AIRBOSS.MenuF10[gid]={}    
             AIRBOSS.MenuF10[gid].player={}
-            AIRBOSS.MenuF10[gid].menu_main=missionCommands.addSubMenuForGroup(gid, "Airboss")
-          end
+        end
+        -- Set menu root path.	
+        local _rootPath=nil	
+
+         if AIRBOSS.MenuF10Root then	
+          ------------------------	
+          -- MISSON LEVEL MENUE --	
+          ------------------------          	
+
+           AIRBOSS.MenuF10[gid].menu_main=AIRBOSS.MenuF10Root	
+
+         else
+            ------------------------
+            -- GROUP LEVEL MENUES --
+            ------------------------
+            
+             AIRBOSS.MenuF10[gid].menu_main=missionCommands.addSubMenuForGroup(gid, "Airboss")
+        end
       end  
       local uid=_unit:GetDCSObject():getID()
       if not AIRBOSS.MenuF10[gid].player[uid] then
-        -- Set menu root path.
-        local _rootPath=nil
         local _playerPath=nil
     
         if self.humansingle then
