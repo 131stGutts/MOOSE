@@ -1796,7 +1796,7 @@ function AIRBOSS:New(carriername, alias)
   -------------------
   
   -- Debug trace.
-  if false then
+  if true then
     self.Debug=true
     BASE:TraceOnOff(true)
     BASE:TraceClass(self.ClassName)
@@ -7063,6 +7063,15 @@ function AIRBOSS:_BreakEntry(playerData)
 
     -- Next step: Early Break.
     self:_SetPlayerStep(playerData, AIRBOSS.PatternStep.EARLYBREAK)
+    if not self.humansingle then
+        for _,_wingman in pairs(playerData.wingmen) do
+            local wingman = self.players[_wingman]
+            if wingman and wingman.name~=playerData.name then
+                -- Now each element are scan individually
+                self:_SetPlayerStep(wingman, AIRBOSS.PatternStep.EARLYBREAK)
+            end
+        end        
+    end
     
   end
 end
@@ -7124,15 +7133,7 @@ function AIRBOSS:_Break(playerData, part)
     end
     
     self:_SetPlayerStep(playerData, nextstep)
-    if not self.humansingle then
-        for _,_wingman in pairs(playerData.wingmen) do
-            local wingman = self.players[_wingman]
-            if wingman and wingman.name~=playerData.name then
-                -- Now each element are scan individually
-                self:_SetPlayerStep(wingman, nextstep)
-            end
-        end        
-    end
+    
   end
 end
 
