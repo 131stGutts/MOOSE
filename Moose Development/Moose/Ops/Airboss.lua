@@ -1653,7 +1653,7 @@ AIRBOSS.MenuF10Root=nil
 
 --- Airboss class version.
 -- @field #string version
-AIRBOSS.version="0.9.4"
+AIRBOSS.version="0.9.5"
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- TODO list
@@ -1867,7 +1867,7 @@ function AIRBOSS:New(carriername, alias)
   -------------------
   
   -- Debug trace.
-  if false then
+  if true then
     self.Debug=true
     BASE:TraceOnOff(true)
     BASE:TraceClass(self.ClassName)
@@ -4027,7 +4027,7 @@ end
 --- Get next marshal flight which is ready to enter the landing pattern.
 -- @param #AIRBOSS self
 -- @return #AIRBOSS.FlightGroup Marshal flight next in line and ready to enter the pattern. Or nil if no flight is ready.
-function AIRBOSS:_GetNextMarshalFight()
+function AIRBOSS:_GetNextMarshalFlight()
 
   -- Loop over all marshal flights.
   for _,_flight in pairs(self.Qmarshal) do
@@ -4140,7 +4140,7 @@ function AIRBOSS:_CheckQueue()
   local _,npattern=self:_GetQueueInfo(self.Qpattern)
   
   -- Get next marshal flight.
-  local marshalflight=self:_GetNextMarshalFight()
+  local marshalflight=self:_GetNextMarshalFlight()
   
   -- Check if there are flights waiting in the Marshal stack and if the pattern is free.
   if marshalflight and npattern<self.Nmaxpattern then
@@ -4968,7 +4968,10 @@ function AIRBOSS:_AddMarshalGroup(flight, stack)
   
   -- If the carrier is supposed to turn into the wind, we take the wind coordinate.
   if self.recoverywindow and self.recoverywindow.WIND then
-    brc=self:GetBRCintoWind()
+        local _,vwind=self:GetCoordinate():GetWind(50)
+    if vwind>0.1 then
+      brc=self:GetBRCintoWind()
+    end
   end
   
   -- Get charlie time estimate.
@@ -5209,18 +5212,24 @@ function AIRBOSS:_GetFlightUnits(flight, onground)
   local function countunits(_group, inair)
     local group=_group --Wrapper.Group#GROUP
     local units=group:GetUnits()
-    local n=0
-    for _,_unit in pairs(units) do
-      local unit=_unit --Wrapper.Unit#UNIT
-      if unit and unit:IsAlive()  then
-        if inair then
-          -- Only count units in air.
-          if unit:InAir() then
-            n=n+1
+    local n=0  
+    if units then
+      local unit=_unit --Wrapper.Unit#UNIT        for _,_unit in pairs(units) do
+      if unit and unit:IsAlive()  then          
+        local unit=_unit --Wrapper.Unit#UNIT
+        if inair then         
+          if unit and unit:IsAlive()  then
+            -- Only count units in air.           if inair then
+            if unit:InAir() then              -- Only count units in air.
+              if unit:InAir() then
+                self:T2(self.lid..string.format("Unit %s is in AIR", unit:GetName()))
+                n=n+1
+              end
+            else
+            -- Count units in air or on the ground.
+              n=n+1
+            end
           end
-        else
-          -- Count units in air or on the ground.
-          n=n+1
         end
       end
     end
@@ -5395,6 +5404,7 @@ function AIRBOSS:_CreateFlightGroup(group)
     flight.ai=not human
     flight.actype=group:GetTypeName()
     flight.onboardnumbers=self:_GetOnboardNumbers(group)
+      --self:T(self.lid..string.format("Onboardnumbers = %s",flight.onboardnumbers))
     flight.seclead=flight.group:GetUnit(1):GetName()  -- Sec lead is first unitname of group but player name for players.
     flight.section={}
     flight.ballcall=false
@@ -5440,6 +5450,13 @@ function AIRBOSS:_CreateFlightGroup(group)
     local existingFlight=self:_GetFlightFromGroupInQueue(group, self.flights)
     existingFlight.nunits=#group:GetUnits()
     existingFlight.onboardnumbers=self:_GetOnboardNumbers(group)
+      --self:T(self.lid..string.format("Onboardnumbers = %s",existingFlight.onboardnumbers))
+    if existingFlight.ai then
+      local onboard=existingFlight.onboardnumbers[existingFlight.seclead]
+      existingFlight.onboard=onboard
+    else
+      existingFlight.onboard=self:_GetOnboardNumberPlayer(group)
+    end
     local units=group:GetUnits()
     local text=string.format("Flight elements of group %s:", existingFlight.groupname)
     for i,_unit in pairs(units) do
@@ -5465,12 +5482,13 @@ function AIRBOSS:_CreateFlightGroup(group)
     flight.group=existingFlight.group
     flight.groupname=existingFlight.groupname
     flight.nunits=existingFlight.nunits
-    flight.time=existingFlight.timer
+    flight.time=existingFlight.time
     flight.dist0=existingFlight.dist0
     flight.flag=existingFlight.flag
     flight.ai=existingFlight.ai
     flight.actype=existingFlight.actype
     flight.onboardnumbers=existingFlight.onboardnumbers
+      --self:T(self.lid..string.format("Onboardnumbers = %s",flight.onboardnumbers))
     flight.seclead=existingFlight.seclead
     flight.leader=existingFlight.leader
     flight.wingmen=existingFlight.wingmen
@@ -5478,6 +5496,7 @@ function AIRBOSS:_CreateFlightGroup(group)
     flight.ballcall=existingFlight.ballcall
     flight.holding=existingFlight.holding
     flight.elements=existingFlight.elements
+    flight.onboard=existingFlight.onboard
     -- TODO Name should also be set for AI as it is used to get the section lead. Switch this from PlayerData to FlightGroup enumerator.
     flight.name=existingFlight.name
     -- Note, this should be re-set elsewhere!
@@ -5678,8 +5697,9 @@ end
 function AIRBOSS:_GetFlightWingmen(unitname, flight)
 
   -- Loop over all elements in flight group.
+
   for i,_wingman in pairs(flight.wingmen) do
-    local wingman=_wingman --#AIRBOSS.FlightElement
+    local wingman=self.players[_wingman] --#AIRBOSS.FlightElement
     
     if wingman.unit:GetName()==unitname then
       return wingman, i
@@ -5858,11 +5878,15 @@ function AIRBOSS:_RemoveUnitFromFlight(unit)
         
         if removed then
         
-          -- Get number of units (excluding section members). For AI only those that are stil in air as we assume once they landed, they are out of the game.
+          -- Get number of units (excluding section members). For AI only those that are still in air as we assume once they landed, they are out of the game.
           local _,nunits=self:_GetFlightUnits(flight, not flight.ai)
-          
+           -- Number of flight elements still left.
+          local nelements=#flight.elements
+          local nwingmen=#flight.wingmen
+           -- Debug info.
+          self:T(self.lid..string.format("Removed unit %s: nunits=%d, nelements=%d, nwingmen=%d", unit:GetName(), nunits, nelements, nwingmen))
           -- Check if no units are left.
-          if nunits==0 then
+          if ( nunits==0 or nelements==0 ) and nwingmen==0 then
             -- Remove flight from all queues.
             self:_RemoveFlight(flight)
           end
@@ -6182,7 +6206,7 @@ function AIRBOSS:OnEventBirth(EventData)
     -- Check if aircraft type the player occupies is carrier capable.
     local rightaircraft=self:_IsCarrierAircraft(_unit)
     if rightaircraft==false then
-      local text=string.format("Player aircraft type %s not supported by AIRBOSS class.", _unit:GetTypeName())
+      local text=string.format("%s: player aircraft type %s not supported by AIRBOSS class.", self.alias, _unit:GetTypeName())
       MESSAGE:New(text, 30):ToAllIf(self.Debug)
       self:T2(self.lid..text)
       return
@@ -6421,7 +6445,24 @@ function AIRBOSS:OnEventCrash(EventData)
     self:_RemoveF10Commands(EventData.IniUnitName)
     -- Remove flight completely from all queues and collapse marshal if necessary.
     if flight then
-      self:_RemoveFlight(flight, true)
+         self:E(self.lid..string.format("Number units: %d ",flight.nunits))
+         self:E(self.lid..string.format("Number units with function: %d ",self:_GetFlightUnits(flight, false)))
+      if flight.nunits == 1 then
+        self:_RemoveFlight(flight, true)
+      else      
+         self:E(self.lid..string.format("Remove unit for flight %s ",flight.name))
+        self:_RemoveUnitFromFlight(_unit)
+        local changeLeaderDone = false
+        self:E(self.lid..string.format("Look for wingmen"))
+        for _, _wingman in pairs(flight.wingmen) do
+          self:E(self.lid..string.format("Wingman is %s",_wingman))
+            if changeLeaderDone == false and _wingman~=flight.leader then
+                changeLeaderDone=true
+                self:_SetLeadership(_wingman)
+            end
+        end
+        self:_ReplaceFlight(flight)
+      end
     end
     
     -- Remove all grades until a final grade is reached.
@@ -6459,10 +6500,28 @@ function AIRBOSS:OnEventEjection(EventData)
     self:T(self.lid..string.format("Player %s ejected!",_playername))
     -- Get player flight.
     local flight=self.players[_playername]
-    self:_RemoveF10Commands(EventData.IniUnitName)    
+    self:_RemoveF10Commands(EventData.IniUnitName)  
     -- Remove flight completely from all queues and collapse marshal if necessary.
     if flight then
-      self:_RemoveFlight(flight, true)
+         self:E(self.lid..string.format("Number units: %d ",flight.nunits))
+         self:E(self.lid..string.format("Number units with function: %d ",self:_GetFlightUnits(flight, false)))
+         
+      if flight.nunits == 1 then
+        self:_RemoveFlight(flight, true)
+      else
+         self:E(self.lid..string.format("Remove unit for flight %s ",flight.name))
+        self:_RemoveUnitFromFlight(_unit)
+        local changeLeaderDone = false
+        self:E(self.lid..string.format("Look for wingmen"))
+        for _, _wingman in pairs(flight.wingmen) do
+          self:E(self.lid..string.format("Wingman is %s",_wingman))
+            if changeLeaderDone == false and _wingman~=flight.leader then
+                changeLeaderDone=true
+                self:_SetLeadership(_wingman)
+            end
+        end
+        self:_ReplaceFlight(flight) 
+      end
     end
 
     -- Remove all grades until a final grade is reached.
@@ -6503,11 +6562,28 @@ function AIRBOSS:_PlayerLeft(EventData)
     self:T(self.lid..string.format("Player %s left unit %s!",_playername, _unitName))
 
     -- Get player flight.
-    local flight=self.players[_playername]
     self:_RemoveF10Commands(EventData.IniUnitName)
+    local flight=self.players[_playername]
     -- Remove flight completely from all queues and collapse marshal if necessary.
     if flight then
-      self:_RemoveFlight(flight, true)
+         self:E(self.lid..string.format("Number units: %d ",flight.nunits))
+         self:E(self.lid..string.format("Number units with function: %d ",self:_GetFlightUnits(flight, false)))
+      if flight.nunits == 1 then
+        self:_RemoveFlight(flight, true)
+      else      
+         self:E(self.lid..string.format("Remove unit for flight %s ",flight.name))
+        self:_RemoveUnitFromFlight(_unit)
+        local changeLeaderDone = false
+        self:E(self.lid..string.format("Look for wingmen"))
+        for _, _wingman in pairs(flight.wingmen) do
+          self:E(self.lid..string.format("Wingman is %s",_wingman))
+            if changeLeaderDone == false and _wingman~=flight.leader then
+                changeLeaderDone=true
+                self:_SetLeadership(_wingman)
+            end
+        end
+        self:_ReplaceFlight(flight)
+      end
     end
     
     -- Remove all grades until a final grade is reached.
@@ -7241,6 +7317,7 @@ function AIRBOSS:_BreakEntry(playerData)
 
     -- Next step: Early Break.
     self:_SetPlayerStep(playerData, AIRBOSS.PatternStep.EARLYBREAK)
+    --[[
     if not self.humansingle then
         for _,_wingman in pairs(playerData.wingmen) do
             local wingman = self.players[_wingman]
@@ -7250,7 +7327,7 @@ function AIRBOSS:_BreakEntry(playerData)
             end
         end        
     end
-    
+    ]]--
   end
 end
 
@@ -10719,7 +10796,10 @@ function AIRBOSS:CarrierTurnIntoWind(time, vdeck)
   
   -- Wind speed.
   local _,vwind=self:GetCoordinate():GetWind(50)
-  
+  -- Check that wind is >= 0.1 m/s.
+  if vwind<0.1 then
+    return
+  end
   -- Speed of carrier in m/s.
   local vtot=vdeck-vwind
   
@@ -11123,6 +11203,7 @@ function AIRBOSS:_GetOnboardNumbers(group, playeronly)
     -- Debug text.
     text=text..string.format("\n- unit %s: onboard #=%s  skill=%s", name, n, skill)
 
+      -- self:T(self.lid..string.format("Onboardnumbers = %s",text))
     if playeronly and skill=="Client" or skill=="Player" then
       -- There can be only one player in the group, so we skip everything else.
       return n
@@ -12142,10 +12223,10 @@ function AIRBOSS:_AddF10Commands(_unitName)
     if group and gid then
     
     
-      if not self.menuadded[gid] then
+      if not AIRBOSS.menuadded[gid] then
       
         -- Enable switch so we don't do this twice.
-        self.menuadded[gid]=true
+        AIRBOSS.menuadded[gid]=true
         
             -- Main F10 menu: F10/Airboss/
         if AIRBOSS.MenuF10[gid]==nil then
@@ -12171,19 +12252,29 @@ function AIRBOSS:_AddF10Commands(_unitName)
         end
       end  
       local uid=_unit:GetDCSObject():getID()
-      if not AIRBOSS.MenuF10[gid].player[uid] then
-        local _playerPath=nil
-    
+      local _playerPath=nil
+      if not AIRBOSS.MenuF10[gid].player[uid] then  
+        AIRBOSS.MenuF10[gid].player[uid]={}        
+        AIRBOSS.MenuF10[gid].player[uid].carrier={}    
         if self.humansingle then
           -- F10/Airboss/...
           _playerPath=AIRBOSS.MenuF10[gid].menu_main
+          AIRBOSS.MenuF10[gid].player[uid].menu_own=AIRBOSS.MenuF10[gid].menu_main
         else
           -- F10/Airboss/<playerName>/...
-          AIRBOSS.MenuF10[gid].player[uid]={}
           AIRBOSS.MenuF10[gid].player[uid].menu_own=missionCommands.addSubMenuForGroup(gid,playername, AIRBOSS.MenuF10[gid].menu_main)  
           _playerPath=AIRBOSS.MenuF10[gid].player[uid].menu_own
         end
-                  
+      end
+      if not AIRBOSS.MenuF10[gid].player[uid].carrier[self.alias] then
+        if not _playerPath then
+            if self.humansingle then
+                -- F10/Airboss/...
+                _playerPath=AIRBOSS.MenuF10[gid].menu_main
+            else
+                _playerPath=AIRBOSS.MenuF10[gid].player[uid].menu_own
+            end
+        end
         if self.menusingle then
           -- F10/Airboss/<playerName>/...
           _rootPath=_playerPath
@@ -12191,6 +12282,7 @@ function AIRBOSS:_AddF10Commands(_unitName)
           -- F10/Airboss/<playerName>/<Carrier Alias>/...
           _rootPath=missionCommands.addSubMenuForGroup(gid, self.alias, _playerPath)
         end
+        AIRBOSS.MenuF10[gid].player[uid].carrier[self.alias]=_rootPath
         
         --------------------------------        
         -- F10/Airboss/<playerName>/<Carrier>/F1 Help
@@ -12239,11 +12331,11 @@ function AIRBOSS:_AddF10Commands(_unitName)
         if self.humansingle then
             missionCommands.addCommandForGroup(gid, "Set Section",      _kneeboardPath, self._SetSection,            self, _unitName) -- F4
         else
-            missionCommands.addCommandForGroup(gid, "Set Leadership to me",      _kneeboardPath, self._SetLeadership,            self, _unitName) -- F4
+            missionCommands.addCommandForGroup(gid, "Set Leadership to me",      _kneeboardPath, self._SetLeadership,            self, playername) -- F4
         end
-        missionCommands.addCommandForGroup(gid, "Marshal Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, self.Qmarshal, "Marshal") -- F5
-        missionCommands.addCommandForGroup(gid, "Pattern Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, self.Qpattern, "Pattern") -- F6
-        missionCommands.addCommandForGroup(gid, "Waiting Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, self.Qwaiting, "Waiting") -- F7
+        missionCommands.addCommandForGroup(gid, "Marshal Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, "Marshal") -- F5
+        missionCommands.addCommandForGroup(gid, "Pattern Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, "Pattern") -- F6
+        missionCommands.addCommandForGroup(gid, "Waiting Queue",    _kneeboardPath, self._DisplayQueue,          self, _unitName, "Waiting") -- F7
 
         -------------------------
         -- F10/Airboss/<playerName>/<Carrier>/
@@ -12279,20 +12371,40 @@ function AIRBOSS:_RemoveF10Commands(_unitName)
     -- Get group and ID.
     local group=_unit:GetGroup()
     local gid=group:GetID()
+    local uid=_unit:GetDCSObject():getID()
       
     if group and gid then
   
-      if self.menuadded[gid] then
-        local uid=_unit:GetDCSObject():getID()
-        missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].player[uid].menu_own)
-        AIRBOSS.MenuF10[gid].player[uid]=nil  
-        local countPlayerInGroup = 0
-        for _ in pairs(AIRBOSS.MenuF10[gid].player) do countPlayerInGroup = countPlayerInGroup + 1 end
-      
-        if AIRBOSS.MenuF10[gid].menu_main and countPlayerInGroup==1 then
-          missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].menu_main)
-          AIRBOSS.MenuF10[gid]=nil
-          self.menuadded[gid]=false
+      local carrierMenuExist = true
+      if not AIRBOSS.MenuF10[gid].player[uid].carrier[self.alias] then
+         carrierMenuExist = false
+      end
+      if AIRBOSS.menuadded[gid] and carrierMenuExist then
+        missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].player[uid].carrier[self.alias])
+        self:E(self.lid..string.format("Removing AIRBOSS Carrier for player uid %s.",uid))
+        AIRBOSS.MenuF10[gid].player[uid].carrier[self.alias]=nil
+        local countCarriers = 0
+        for _ in pairs(AIRBOSS.MenuF10[gid].player[uid].carrier) do
+            countCarriers = countCarriers + 1     
+            self:E(self.lid..string.format("Carrier menu found"))   
+        end
+        self:E(self.lid..string.format("Count carriers: %s.", countCarriers))
+        if countCarriers == 0 and AIRBOSS.MenuF10[gid].player[uid].menu_own then
+            missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].player[uid].menu_own)
+            self:E(self.lid..string.format("Removing AIRBOSS Menu_own."))
+            AIRBOSS.MenuF10[gid].player[uid]=nil
+            local countPlayerInGroup = 0
+            for _ in pairs(AIRBOSS.MenuF10[gid].player) do
+                    countPlayerInGroup = countPlayerInGroup + 1
+                    self:E(self.lid..string.format("Player menu found"))
+            end            
+            self:E(self.lid..string.format("Count players in group: %s.", countPlayerInGroup))
+            if AIRBOSS.MenuF10[gid].menu_main and countPlayerInGroup==0 then
+                self:E(self.lid..string.format("Removing AIRBOSS Menu_main."))
+              missionCommands.removeItemForGroup(gid,AIRBOSS.MenuF10[gid].menu_main)
+              AIRBOSS.MenuF10[gid]=nil
+              AIRBOSS.menuadded[gid]=false
+            end
         end
       else
         self:E(self.lid..string.format("ERROR: Could not find menue for group ID in _RemoveF10Commands() function. Unit name: %s.", _unitName))
@@ -12395,7 +12507,8 @@ function AIRBOSS:_RequestMarshal(_unitName)
         elseif not self.humansingle and playerData.leader~=playerData.name then
             
           -- You're a wingman, not a leader, stay at your place!
-          text=string.format("negative, %s, your leader %s has to request Marshal!", playerData.name, playerData.leader)
+          local text=string.format("negative, %s, your leader %s has to request Marshal!", playerData.name, playerData.leader)
+          self:MessageToPlayer(playerData, text, "MARSHAL")        
       
         else
         
@@ -12424,7 +12537,11 @@ function AIRBOSS:_RequestMarshal(_unitName)
         self:MessageToPlayer(playerData, text, "MARSHAL")
         
       end
+    else
+      self:T(self.lid..string.format("Player %s not found in self.players[_playername].", _playername))
     end
+  else
+    self:T(self.lid..string.format("Unit not found!"))
   end
 end
 
@@ -12651,19 +12768,41 @@ end
 
 --- Set leader value for me and my wingmen .
 -- @param #AIRBOSS self
--- @param #string _unitName Name of the player unit.
-function AIRBOSS:_SetLeadership(_unitName)
+-- @param #string _playername Name of the player name.
+function AIRBOSS:_SetLeadership(_playername)
     
-  -- Get player unit and name.
-  local _unit, _playername = self:_GetPlayerUnitAndName(_unitName)
   
+      self:E(self.lid..string.format("Leadership requested for %s ",_playername))
   -- Check if we have a unit which is a player.
-    if _unit and _playername then
+    if _playername then
         local playerData=self.players[_playername] --#AIRBOSS.PlayerData
         for _,wingman in pairs(playerData.wingmen) do
+            self:E(self.lid..string.format("Current _wingman is %s ",wingman))
             local _wingman = self.players[wingman]
             if _wingman then
-                _wingman.leader=playerData.name
+                self:E(self.lid..string.format("Leadership change for %s by %s",wingman,_playername))
+                _wingman.leader=_playername
+            end
+        end
+    end
+end
+
+--- Replace the existing flight in flights and all queues by the one
+--- which has the leadership
+-- @param #AIRBOSS self
+-- @param #AIRBOSS.PlayerData playerData Player 
+function AIRBOSS:_ReplaceFlight(playerData)
+    local queues = { self.flights, self.Qpattern, self.Qmarshal, self.Qwaiting }
+    for _,_wingman in pairs(playerData.wingmen) do
+        local wingman = self.players[_wingman]
+        wingman.nunit=#wingman.group:GetUnits() - 1
+        if wingman and wingman.leader==_wingman then
+            for _i, _queue in pairs(queues) do
+                for _j, _flight in pairs(queue) do
+                    if _flight.group==playerData.group  and _flight.name==playerData.name then
+                        queue[_j]=wingman
+                    end
+                end
             end
         end
     end
@@ -13046,9 +13185,8 @@ end
 --- Display marshal or pattern queue.
 -- @param #AIRBOSS self
 -- @param #string _unitname Name of the player unit.
--- @param #table queue The queue to display.
 -- @param #string qname Name of the queue.
-function AIRBOSS:_DisplayQueue(_unitname, queue, qname)
+function AIRBOSS:_DisplayQueue(_unitname, qname)
 
   -- Get player unit and player name.
   local unit, playername = self:_GetPlayerUnitAndName(_unitname)
@@ -13060,7 +13198,15 @@ function AIRBOSS:_DisplayQueue(_unitname, queue, qname)
     local playerData=self.players[playername]  --#AIRBOSS.PlayerData
     
     if playerData then
-    
+          -- Queue to display.
+      local queue=nil
+      if qname=="Marshal" then
+        queue=self.Qmarshal
+      elseif qname=="Pattern" then
+        queue=self.Qpattern
+      elseif qname=="Waiting" then      
+        queue=self.Qwaiting
+      end
       -- Number of group and units in queue
       local Nqueue,nqueue=self:_GetQueueInfo(queue, playerData.case)
     
