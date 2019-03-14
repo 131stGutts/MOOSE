@@ -150,6 +150,8 @@
 -- @field #number  parkingscanradius Radius in meters until which parking spots are scanned for obstacles like other units, statics or scenery.
 -- @field #boolean parkingscanscenery If true, area around parking spots is scanned for scenery objects. Default is false.
 -- @field #boolean parkingverysafe If true, parking spots are considered as non-free until a possible aircraft has left and taken off. Default false.
+-- @field #boolean despawnair If true, aircraft are despawned when they reach their destination zone. Default.
+-- @field #boolean eplrs If true, turn on EPLSR datalink for the RAT group.
 -- @extends Core.Spawn#SPAWN
 
 --- Implements an easy to use way to randomly fill your map with AI aircraft.
@@ -428,6 +430,8 @@ RAT={
   parkingscanradius=40,     -- Scan radius.
   parkingscanscenery=false, -- Scan parking spots for scenery obstacles.
   parkingverysafe=false,    -- Very safe option.
+  despawnair=true,
+  eplrs=false,
 }
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -546,7 +550,7 @@ RAT.id="RAT | "
 --- RAT version.
 -- @list version
 RAT.version={
-  version = "2.3.5",
+  version = "2.3.7",
   print = true,
 }
 
@@ -1098,6 +1102,14 @@ function RAT:SetParkingSpotSafeOFF()
   return self
 end
 
+--- Aircraft that reach their destination zone are not despawned. They will probably go the the nearest airbase and try to land.
+-- @param #RAT self
+-- @return #RAT RAT self object.
+function RAT:SetDespawnAirOFF()
+  self.despawnair=false
+  return self
+end
+
 --- Set takeoff type. Starting cold at airport, starting hot at airport, starting at runway, starting in the air.
 -- Default is "takeoff-coldorhot". So there is a 50% chance that the aircraft starts with cold engines and 50% that it starts with hot engines. 
 -- @param #RAT self
@@ -1632,6 +1644,19 @@ function RAT:Invisible()
   return self
 end
 
+--- Turn EPLRS datalink on/off. 
+-- @param #RAT self
+-- @param #boolean switch If true (or nil), turn EPLRS on.
+-- @return #RAT RAT self object.
+function RAT:SetEPLRS(switch)
+  if switch==nil or switch==true then
+    self.eplrs=true
+  else
+    self.eplrs=false
+  end
+  return self
+end
+
 --- Aircraft are immortal. 
 -- @param #RAT self
 -- @return #RAT RAT self object.
@@ -2153,6 +2178,11 @@ function RAT:_SpawnWithRoute(_departure, _destination, _takeoff, _landing, _live
   if self.immortal then
     self:_CommandImmortal(group, true)
   end
+  
+  -- Set group to be immortal.
+  if self.eplrs then
+    group:CommandEPLRS(true, 1)
+  end  
   
   -- Set ROE, default is "weapon hold".
   self:_SetROE(group, self.roe)
@@ -3604,13 +3634,18 @@ function RAT:Status(message, forID)
       
         local text=string.format("Flight %s will be despawned NOW!", self.alias)
         self:T(RAT.id..text)
-        -- Despawn old group.
+        
+        -- Respawn group
         if (not self.norespawn) and (not self.respawn_after_takeoff) then
           local idx=self:GetSpawnIndexFromGroup(group)
           local coord=group:GetCoordinate()  
           self:_Respawn(idx, coord, 0)
         end
-        self:_Despawn(group, 0)
+        
+        -- Despawn old group.
+        if self.despawnair then
+          self:_Despawn(group, 0)
+        end
         
       end
 

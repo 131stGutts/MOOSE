@@ -326,6 +326,7 @@ end
 -- To raise these events, provide the `GenerateEvent` parameter.
 -- @param #GROUP self
 -- @param #boolean GenerateEvent If true, a crash or dead event for each unit is generated. If false, if no event is triggered. If nil, a RemoveUnit event is triggered.
+-- @param #number delay Delay in seconds before despawning the group.
 -- @usage
 -- -- Air unit example: destroy the Helicopter and generate a S_EVENT_CRASH for each unit in the Helicopter group.
 -- Helicopter = GROUP:FindByName( "Helicopter" )
@@ -344,30 +345,35 @@ end
 -- Ship = GROUP:FindByName( "Boat" )
 -- Ship:Destroy( false ) -- Don't generate an event upon destruction.
 -- 
-function GROUP:Destroy( GenerateEvent )
+function GROUP:Destroy( GenerateEvent, delay )
   self:F2( self.GroupName )
+  
+  if delay and delay>0 then
+    SCHEDULER:New(nil, GROUP.Destroy, {self, GenerateEvent}, delay)
+  else
 
-  local DCSGroup = self:GetDCSObject()
-
-  if DCSGroup then
-    for Index, UnitData in pairs( DCSGroup:getUnits() ) do
-      if GenerateEvent and GenerateEvent == true then
-        if self:IsAir() then
-          self:CreateEventCrash( timer.getTime(), UnitData )
+    local DCSGroup = self:GetDCSObject()
+  
+    if DCSGroup then
+      for Index, UnitData in pairs( DCSGroup:getUnits() ) do
+        if GenerateEvent and GenerateEvent == true then
+          if self:IsAir() then
+            self:CreateEventCrash( timer.getTime(), UnitData )
+          else
+            self:CreateEventDead( timer.getTime(), UnitData )
+          end
+        elseif GenerateEvent == false then
+          -- Do nothing!
         else
-          self:CreateEventDead( timer.getTime(), UnitData )
+          self:CreateEventRemoveUnit( timer.getTime(), UnitData )
         end
-      elseif GenerateEvent == false then
-        -- Do nothing!
-      else
-        self:CreateEventRemoveUnit( timer.getTime(), UnitData )
       end
+      USERFLAG:New( self:GetName() ):Set( 100 )
+      DCSGroup:destroy()
+      DCSGroup = nil
     end
-    USERFLAG:New( self:GetName() ):Set( 100 )
-    DCSGroup:destroy()
-    DCSGroup = nil
   end
-
+  
   return nil
 end
 
@@ -1916,6 +1922,47 @@ function GROUP:InAir()
   
   return nil
 end
+
+--- Checks whether any unit (or optionally) all units of a group is(are) airbore or not.
+-- @param Wrapper.Group#GROUP self
+-- @param #boolean AllUnits (Optional) If true, check whether all units of the group are airborne.
+-- @return #boolean True if at least one (optionally all) unit(s) is(are) airborne or false otherwise. Nil if no unit exists or is alive.
+function GROUP:IsAirborne(AllUnits)
+  self:F2( self.GroupName )
+
+  -- Get all units of the group.
+  local units=self:GetUnits()
+  
+  if units then
+  
+    for _,_unit in pairs(units) do
+      local unit=_unit --Wrapper.Unit#UNIT
+      
+      if unit then
+      
+        -- Unit in air or not.
+        local inair=unit:InAir()
+        
+        -- Unit is not in air and we wanted to know whether ALL units are ==> return false
+        if inair==false and AllUnits==true then
+          return false
+        end
+        
+        -- At least one unit is in are and we did not care which one.
+        if inair==true and not AllUnits then
+          return true
+        end
+        
+      end
+      -- At least one unit is in the air.
+      return true  
+    end
+  end
+  
+  return nil
+end
+
+
 
 --- Returns the DCS descriptor table of the nth unit of the group.
 -- @param #GROUP self

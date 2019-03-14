@@ -59,10 +59,6 @@ DCSMAP = {
 
 --- See [DCS_enum_callsigns](https://wiki.hoggitworld.com/view/DCS_enum_callsigns)
 -- @type CALLSIGN
--- @field #table Aircraft Aircraft callsigns.
--- @field #table AWACS AWACS callsigns.
--- @field #table Tanker Tanker callsigns.
--- @field #table JTAC JTAC callsigns.
 CALLSIGN={
   -- Aircraft
   Aircraft={
@@ -349,11 +345,11 @@ UTILS.MpsToMiph = function( mps )
 end
 
 UTILS.MpsToKnots = function( mps )
-  return mps * 3600 / 1852
+  return mps * 1.94384 --3600 / 1852
 end
 
 UTILS.KnotsToMps = function( knots )
-  return knots * 1852 / 3600
+  return knots / 1.94384 --* 1852 / 3600
 end
 
 UTILS.CelciusToFarenheit = function( Celcius )
@@ -519,6 +515,31 @@ function UTILS.spairs( t, order )
         i = i + 1
         if keys[i] then
             return keys[i], t[keys[i]]
+        end
+    end
+end
+
+-- Here is a customized version of pairs, which I called rpairs because it iterates over the table in a random order.
+function UTILS.rpairs( t )
+    -- collect the keys
+    
+    local keys = {}
+    for k in pairs(t) do keys[#keys+1] = k end
+
+    local random = {}
+    local j = #keys
+    for i = 1, j do
+      local k = math.random( 1, #keys )
+      random[i] = keys[k]
+      table.remove( keys, k )
+    end
+    
+    -- return the iterator function
+    local i = 0
+    return function()
+        i = i + 1
+        if random[i] then
+            return random[i], t[random[i]]
         end
     end
 end
@@ -786,6 +807,14 @@ function UTILS.VecSubstract(a, b)
   return {x=a.x-b.x, y=a.y-b.y, z=a.z-b.z}
 end
 
+--- Calculate the total vector of two 3D vectors by adding the x,y,z components of each other. 
+-- @param DCS#Vec3 a Vector in 3D with x, y, z components.
+-- @param DCS#Vec3 b Vector in 3D with x, y, z components.
+-- @return DCS#Vec3 Vector c=a+b with c(i)=a(i)+b(i), i=x,y,z.
+function UTILS.VecAdd(a, b)
+  return {x=a.x+b.x, y=a.y+b.y, z=a.z+b.z}
+end
+
 --- Calculate the angle between two 3D vectors. 
 -- @param DCS#Vec3 a Vector in 3D with x, y, z components.
 -- @param DCS#Vec3 b Vector in 3D with x, y, z components.
@@ -794,6 +823,18 @@ function UTILS.VecAngle(a, b)
   local alpha=math.acos(UTILS.VecDot(a,b)/(UTILS.VecNorm(a)*UTILS.VecNorm(b)))
   return math.deg(alpha)
 end
+
+--- Calculate "heading" of a 3D vector in the X-Z plane.
+-- @param DCS#Vec3 a Vector in 3D with x, y, z components.
+-- @return #number Heading in degrees in [0,360).
+function UTILS.VecHdg(a)
+  local h=math.deg(math.atan2(a.z, a.x))
+  if h<0 then
+    h=h+360
+  end
+  return h
+end
+
 
 --- Rotate 3D vector in the 2D (x,z) plane. y-component (usually altitude) unchanged. 
 -- @param DCS#Vec3 a Vector in 3D with x, y, z components.
@@ -859,6 +900,16 @@ end
 function UTILS.GetDCSMap()
   return env.mission.theatre
 end
+
+--- Returns the mission date. This is the date the mission started.
+-- @return #string Mission date in yyyy/mm/dd format.
+function UTILS.GetDCSMissionDate()
+  local year=tostring(env.mission.date.Year)
+  local month=tostring(env.mission.date.Month)
+  local day=tostring(env.mission.date.Day)
+  return string.format("%s/%s/%s", year, month, day)
+end
+
 
 --- Returns the magnetic declination of the map.
 -- Returned values for the current maps are:
