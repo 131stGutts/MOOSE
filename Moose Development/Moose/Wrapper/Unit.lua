@@ -555,7 +555,7 @@ end
 -- @return #number The relative amount of fuel (from 0.0 to 1.0).
 -- @return #nil The DCS Unit is not existing or alive.  
 function UNIT:GetFuel()
-  self:F( self.UnitName )
+  self:F3( self.UnitName )
 
   local DCSUnit = self:GetDCSObject()
   
@@ -571,7 +571,7 @@ end
 -- @param #UNIT self
 -- @return #list<Wrapper.Unit#UNIT> A list of one @{Wrapper.Unit}.
 function UNIT:GetUnits()
-  self:F2( { self.UnitName } )
+  self:F3( { self.UnitName } )
   local DCSUnit = self:GetDCSObject()
 
   local Units = {}
@@ -783,6 +783,27 @@ function UNIT:GetThreatLevel()
 
 end
 
+--- Triggers an explosion at the coordinates of the unit.
+-- @param #UNIT self
+-- @param #number power Power of the explosion in kg TNT. Default 100 kg TNT.
+-- @param #number delay (Optional) Delay of explosion in seconds.
+-- @return #UNIT self
+function UNIT:Explode(power, delay)
+
+  -- Default.
+  power=power or 100
+  
+  -- Check if delay or not.
+  if delay and delay>0 then
+    -- Delayed call.
+    SCHEDULER:New(nil, self.Explode, {self, power}, delay)
+  else
+    -- Create an explotion at the coordinate of the unit.
+    self:GetCoordinate():Explosion(power)
+  end
+
+  return self
+end
 
 -- Is functions
 
@@ -897,8 +918,7 @@ end
 
 --- Returns true if the UNIT is in the air.
 -- @param #UNIT self
--- @return #boolean true if in the air.
--- @return #nil The UNIT is not existing or alive.  
+-- @return #boolean Return true if in the air or #nil if the UNIT is not existing or alive.   
 function UNIT:InAir()
   self:F2( self.UnitName )
 

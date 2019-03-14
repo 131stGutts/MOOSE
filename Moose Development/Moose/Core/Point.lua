@@ -210,6 +210,7 @@ do -- COORDINATE
     FromParkingAreaHot = "From Parking Area Hot",
     FromRunway = "From Runway",
     Landing = "Landing",
+    LandingReFuAr = "LandingReFuAr",
   }
 
   --- @field COORDINATE.WaypointType 
@@ -219,6 +220,7 @@ do -- COORDINATE
     TakeOff = "TakeOffParkingHot",
     TurningPoint = "Turning Point",
     Land = "Land",
+    LandingReFuAr = "LandingReFuAr",
   }
 
 
@@ -460,17 +462,46 @@ do -- COORDINATE
   -- @param #COORDINATE self
   -- @param DCS#Distance Distance The Distance to be added in meters.
   -- @param DCS#Angle Angle The Angle in degrees. Defaults to 0 if not specified (nil).
+  -- @param #boolean Keepalt If true, keep altitude of original coordinate. Default is that the new coordinate is created at the translated land height.
   -- @return Core.Point#COORDINATE The new calculated COORDINATE.
-  function COORDINATE:Translate( Distance, Angle )
+  function COORDINATE:Translate( Distance, Angle, Keepalt )
     local SX = self.x
     local SY = self.z
     local Radians = (Angle or 0) / 180 * math.pi
     local TX = Distance * math.cos( Radians ) + SX
     local TY = Distance * math.sin( Radians ) + SY
-
-    return COORDINATE:NewFromVec2( { x = TX, y = TY } )
+  
+    if Keepalt then
+      return COORDINATE:NewFromVec3( { x = TX, y=self.y, z = TY } )
+    else
+      return COORDINATE:NewFromVec2( { x = TX, y = TY } )
+    end
   end
 
+  --- Rotate coordinate in 2D (x,z) space.
+  -- @param #COORDINATE self
+  -- @param DCS#Angle Angle Angle of rotation in degrees.
+  -- @return Core.Point#COORDINATE The rotated coordinate.
+  function COORDINATE:Rotate2D(Angle)
+  
+    if not Angle then
+      return self
+    end
+
+    local phi=math.rad(Angle)
+    
+    local X=self.z
+    local Y=self.x
+    
+    --slocal R=math.sqrt(X*X+Y*Y)
+      
+    local x=X*math.cos(phi)-Y*math.sin(phi)
+    local y=X*math.sin(phi)+Y*math.cos(phi)
+
+    -- Coordinate assignment looks bit strange but is correct.
+    return COORDINATE:NewFromVec3({x=y, y=self.y, z=x})
+  end
+  
   --- Return a random Vec2 within an Outer Radius and optionally NOT within an Inner Radius of the COORDINATE.
   -- @param #COORDINATE self
   -- @param DCS#Distance OuterRadius
@@ -998,15 +1029,20 @@ do -- COORDINATE
   -- @param Wrapper.Airbase#AIRBASE airbase The airbase for takeoff and landing points.
   -- @param #table DCSTasks A table of @{DCS#Task} items which are executed at the waypoint.
   -- @param #string description A text description of the waypoint, which will be shown on the F10 map.
+  -- @param #number timeReFuAr Time in minutes the aircraft stays at the airport for ReFueling and ReArming.
   -- @return #table The route point.
-  function COORDINATE:WaypointAir( AltType, Type, Action, Speed, SpeedLocked, airbase, DCSTasks, description )
+  function COORDINATE:WaypointAir( AltType, Type, Action, Speed, SpeedLocked, airbase, DCSTasks, description, timeReFuAr )
     self:F2( { AltType, Type, Action, Speed, SpeedLocked } )
     
-    -- Defaults
+    -- Set alttype or "RADIO" which is AGL.
     AltType=AltType or "RADIO"
+    
+    -- Speedlocked by default
     if SpeedLocked==nil then
       SpeedLocked=true
     end
+    
+    -- Speed or default 500 km/h.
     Speed=Speed or 500
     
     -- Waypoint array.
@@ -1015,19 +1051,26 @@ do -- COORDINATE
     -- Coordinates.
     RoutePoint.x = self.x
     RoutePoint.y = self.z
+    
     -- Altitude.
     RoutePoint.alt = self.y
     RoutePoint.alt_type = AltType
+    
     -- Waypoint type.
     RoutePoint.type = Type or nil
-    RoutePoint.action = Action or nil
-    -- Set speed/ETA.
+    RoutePoint.action = Action or nil    
+    
+    -- Speed.
     RoutePoint.speed = Speed/3.6
     RoutePoint.speed_locked = SpeedLocked
-    RoutePoint.ETA=nil
-    RoutePoint.ETA_locked = false    
+    
+    -- ETA.
+    RoutePoint.ETA=0
+    RoutePoint.ETA_locked=true
+    
     -- Waypoint description.
     RoutePoint.name=description
+    
     -- Airbase parameters for takeoff and landing points.
     if airbase then
       local AirbaseID = airbase:GetID()
@@ -1036,31 +1079,34 @@ do -- COORDINATE
         RoutePoint.linkUnit = AirbaseID
         RoutePoint.helipadId = AirbaseID
       elseif AirbaseCategory == Airbase.Category.AIRDROME then
-        RoutePoint.airdromeId = AirbaseID       
+        RoutePoint.airdromeId = AirbaseID
       else
         self:T("ERROR: Unknown airbase category in COORDINATE:WaypointAir()!")
-      end  
-    end        
+      end
+      
+      --self:MarkToAll(string.format("Landing waypoint at airbase %s, ID=%d, Category=%d", airbase:GetName(), AirbaseID, AirbaseCategory  ))
+    end
     
-
-    --  ["task"] =
-    --  {
-    --      ["id"] = "ComboTask",
-    --      ["params"] =
-    --      {
-    --          ["tasks"] =
-    --          {
-    --          }, -- end of ["tasks"]
-    --      }, -- end of ["params"]
-    --  }, -- end of ["task"]
-
+    -- Time in minutes to stay at the airbase before resuming route. 
+    if Type==COORDINATE.WaypointType.LandingReFuAr then
+      RoutePoint.timeReFuAr=timeReFuAr or 10
+    end
+    
     -- Waypoint tasks.
     RoutePoint.task = {}
     RoutePoint.task.id = "ComboTask"
     RoutePoint.task.params = {}
     RoutePoint.task.params.tasks = DCSTasks or {}
+    
+    --RoutePoint.properties={}
+    --RoutePoint.properties.addopt={}
+    
+    --RoutePoint.formation_template=""
 
+    -- Debug.
     self:T({RoutePoint=RoutePoint})
+    
+    -- Return waypoint.
     return RoutePoint
   end
 
@@ -1132,10 +1178,20 @@ do -- COORDINATE
   --    HeliGroup:Route( { LandWaypoint }, 1 ) -- Start landing the helicopter in one second.
   -- 
   function COORDINATE:WaypointAirLanding( Speed, airbase, DCSTasks, description )
-    return self:WaypointAir(nil, COORDINATE.WaypointType.Land, COORDINATE.WaypointAction.Landing, Speed, nil, airbase, DCSTasks, description)
+    return self:WaypointAir(nil, COORDINATE.WaypointType.Land, COORDINATE.WaypointAction.Landing, Speed, false, airbase, DCSTasks, description)
   end
   
-  
+  --- Build a Waypoint Air "LandingReFuAr". Mimics the aircraft ReFueling and ReArming. 
+  -- @param #COORDINATE self
+  -- @param DCS#Speed Speed Airspeed in km/h.
+  -- @param Wrapper.Airbase#AIRBASE airbase The airbase for takeoff and landing points.
+  -- @param #number timeReFuAr Time in minutes, the aircraft stays at the airbase. Default 10 min.
+  -- @param #table DCSTasks A table of @{DCS#Task} items which are executed at the waypoint.
+  -- @param #string description A text description of the waypoint, which will be shown on the F10 map.
+  -- @return #table The route point.
+  function COORDINATE:WaypointAirLandingReFu( Speed, airbase, timeReFuAr, DCSTasks, description )
+    return self:WaypointAir(nil, COORDINATE.WaypointType.LandingReFuAr, COORDINATE.WaypointAction.LandingReFuAr, Speed, false, airbase, DCSTasks, description, timeReFuAr or 10)
+  end  
   
   
   --- Build an ground type route point.

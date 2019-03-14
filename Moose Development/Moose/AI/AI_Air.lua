@@ -7,7 +7,7 @@
 -- ===
 -- 
 -- @module AI.AI_Air
--- @image AI_Air_Operations.JPG
+-- @image MOOSE.JPG
 
 --- @type AI_AIR
 -- @extends Core.Fsm#FSM_CONTROLLABLE
@@ -51,6 +51,8 @@ AI_AIR = {
   ClassName = "AI_AIR",
 }
 
+AI_AIR.TaskDelay = 0.5 -- The delay of each task given to the AI.
+
 --- Creates a new AI_AIR process.
 -- @param #AI_AIR self
 -- @param Wrapper.Group#GROUP AIGroup The group object to receive the A2G Process.
@@ -63,6 +65,8 @@ function AI_AIR:New( AIGroup )
   self:SetControllable( AIGroup )
   
   self:SetStartState( "Stopped" ) 
+
+  self:AddTransition( "*", "Queue", "Queued" )
 
   self:AddTransition( "*", "Start", "Started" )
   
@@ -298,6 +302,19 @@ function AI_AIR:SetSpeed( PatrolMinSpeed, PatrolMaxSpeed )
 end
 
 
+--- Sets (modifies) the minimum and maximum RTB speed of the patrol.
+-- @param #AI_AIR self
+-- @param DCS#Speed  RTBMinSpeed The minimum speed of the @{Wrapper.Controllable} in km/h.
+-- @param DCS#Speed  RTBMaxSpeed The maximum speed of the @{Wrapper.Controllable} in km/h.
+-- @return #AI_AIR self
+function AI_AIR:SetRTBSpeed( RTBMinSpeed, RTBMaxSpeed )
+  self:F2( { RTBMinSpeed, RTBMaxSpeed } )
+  
+  self.RTBMinSpeed = RTBMinSpeed
+  self.RTBMaxSpeed = RTBMaxSpeed
+end
+
+
 --- Sets the floor and ceiling altitude of the patrol.
 -- @param #AI_AIR self
 -- @param DCS#Altitude PatrolFloorAltitude The lowest altitude in meters where to execute the patrol.
@@ -387,6 +404,8 @@ function AI_AIR:SetDamageThreshold( PatrolDamageThreshold )
   return self
 end
 
+
+
 --- Defines a new patrol route using the @{Process_PatrolZone} parameters and settings.
 -- @param #AI_AIR self
 -- @return #AI_AIR self
@@ -425,7 +444,6 @@ function AI_AIR:onafterStatus()
     
     if not self:Is( "Holding" ) and not self:Is( "Returning" ) then
       local DistanceFromHomeBase = self.HomeAirbase:GetCoordinate():Get2DDistance( self.Controllable:GetCoordinate() )
-      self:F({DistanceFromHomeBase=DistanceFromHomeBase})
       
       if DistanceFromHomeBase > self.DisengageRadius then
         self:E( self.Controllable:GetName() .. " is too far from home base, RTB!" )
@@ -444,9 +462,13 @@ function AI_AIR:onafterStatus()
     
 
     if not self:Is( "Fuel" ) and not self:Is( "Home" ) then
+      
       local Fuel = self.Controllable:GetFuelMin()
-      self:F({Fuel=Fuel, FuelThresholdPercentage=self.FuelThresholdPercentage})
+      
+      -- If the fuel in the controllable is below the treshold percentage,
+      -- then send for refuel in case of a tanker, otherwise RTB.
       if Fuel < self.FuelThresholdPercentage then
+      
         if self.TankerName then
           self:E( self.Controllable:GetName() .. " is out of fuel: " .. Fuel .. " ... Refuelling at Tanker!" )
           self:Refuel()
@@ -468,14 +490,17 @@ function AI_AIR:onafterStatus()
     -- TODO: Check GROUP damage function.
     local Damage = self.Controllable:GetLife()
     local InitialLife = self.Controllable:GetLife0()
-    self:F( { Damage = Damage, InitialLife = InitialLife, DamageThreshold = self.PatrolDamageThreshold } )
+    
+    -- If the group is damaged, then RTB.
+    -- Note that a group can consist of more units, so if one unit is damaged of a group, the mission may continue.
+    -- The damaged unit will RTB due to DCS logic, and the others will continue to engage.
     if ( Damage / InitialLife ) < self.PatrolDamageThreshold then
       self:E( self.Controllable:GetName() .. " is damaged: " .. Damage .. " ... RTB!" )
       self:Damaged()
       RTB = true
       self:SetStatusOff()
     end
-
+    
     -- Check if planes went RTB and are out of control.
     -- We only check if planes are out of control, when they are in duty.
     if self.Controllable:HasTask() == false then
@@ -484,11 +509,12 @@ function AI_AIR:onafterStatus()
          not self:Is( "Fuel" ) and 
          not self:Is( "Damaged" ) and 
          not self:Is( "Home" ) then
-        if self.IdleCount >= 2 then
+        if self.IdleCount >= 10 then
           if Damage ~= InitialLife then
             self:Damaged()
           else  
             self:E( self.Controllable:GetName() .. " control lost! " )
+            
             self:LostControl()
           end
         else
@@ -500,7 +526,7 @@ function AI_AIR:onafterStatus()
     end
 
     if RTB == true then
-      self:__RTB( 0.5 )
+      self:__RTB( self.TaskDelay )
     end
 
     if not self:Is("Home") then
@@ -517,7 +543,7 @@ function AI_AIR.RTBRoute( AIGroup, Fsm )
   AIGroup:F( { "AI_AIR.RTBRoute:", AIGroup:GetName() } )
   
   if AIGroup:IsAlive() then
-    Fsm:__RTB( 0.5 )
+    Fsm:RTB()
   end
   
 end
@@ -527,7 +553,7 @@ function AI_AIR.RTBHold( AIGroup, Fsm )
 
   AIGroup:F( { "AI_AIR.RTBHold:", AIGroup:GetName() } )
   if AIGroup:IsAlive() then
-    Fsm:__RTB( 0.5 )
+    Fsm:__RTB( Fsm.TaskDelay )
     Fsm:Return()
     local Task = AIGroup:TaskOrbitCircle( 4000, 400 )
     AIGroup:SetTask( Task )
@@ -547,25 +573,35 @@ function AI_AIR:onafterRTB( AIGroup, From, Event, To )
     self:E( "Group " .. AIGroup:GetName() .. " ... RTB! ( " .. self:GetState() .. " )" )
     
     self:ClearTargetDistance()
-    AIGroup:ClearTasks()
+    --AIGroup:ClearTasks()
 
     local EngageRoute = {}
 
     --- Calculate the target route point.
     
-    local CurrentCoord = AIGroup:GetCoordinate()
+    local FromCoord = AIGroup:GetCoordinate()
     local ToTargetCoord = self.HomeAirbase:GetCoordinate()
-    local ToTargetSpeed = math.random( self.PatrolMinSpeed, self.PatrolMaxSpeed )
-    local ToAirbaseAngle = CurrentCoord:GetAngleDegrees( CurrentCoord:GetDirectionVec3( ToTargetCoord ) )
+    local ToTargetSpeed = math.random( self.RTBMinSpeed, self.RTBMaxSpeed )
+    local ToAirbaseAngle = FromCoord:GetAngleDegrees( FromCoord:GetDirectionVec3( ToTargetCoord ) )
 
-    local Distance = CurrentCoord:Get2DDistance( ToTargetCoord )
+    local Distance = FromCoord:Get2DDistance( ToTargetCoord )
     
-    local ToAirbaseCoord = CurrentCoord:Translate( 5000, ToAirbaseAngle )
+    local ToAirbaseCoord = FromCoord:Translate( 5000, ToAirbaseAngle )
     if Distance < 5000 then
       self:E( "RTB and near the airbase!" )
       self:Home()
       return
     end
+    
+    --- Create a route point of type air.
+    local FromRTBRoutePoint = FromCoord:WaypointAir( 
+      self.PatrolAltType, 
+      POINT_VEC3.RoutePointType.TurningPoint, 
+      POINT_VEC3.RoutePointAction.TurningPoint, 
+      ToTargetSpeed, 
+      true 
+    )
+
     --- Create a route point of type air.
     local ToRTBRoutePoint = ToAirbaseCoord:WaypointAir( 
       self.PatrolAltType, 
@@ -575,24 +611,19 @@ function AI_AIR:onafterRTB( AIGroup, From, Event, To )
       true 
     )
 
-    self:F( { Angle = ToAirbaseAngle, ToTargetSpeed = ToTargetSpeed } )
-    self:T2( { self.MinSpeed, self.MaxSpeed, ToTargetSpeed } )
-    
-    EngageRoute[#EngageRoute+1] = ToRTBRoutePoint
+    EngageRoute[#EngageRoute+1] = FromRTBRoutePoint
     EngageRoute[#EngageRoute+1] = ToRTBRoutePoint
     
+    local Tasks = {}
+    Tasks[#Tasks+1] = AIGroup:TaskFunction( "AI_AIR.RTBRoute", self )
+    
+    EngageRoute[#EngageRoute].task = AIGroup:TaskCombo( Tasks )
+
     AIGroup:OptionROEHoldFire()
     AIGroup:OptionROTEvadeFire()
 
-    --- Now we're going to do something special, we're going to call a function from a waypoint action at the AIControllable...
-    AIGroup:WayPointInitialize( EngageRoute )
-  
-    local Tasks = {}
-    Tasks[#Tasks+1] = AIGroup:TaskFunction( "AI_AIR.RTBRoute", self )
-    EngageRoute[#EngageRoute].task = AIGroup:TaskCombo( Tasks )
-
     --- NOW ROUTE THE GROUP!
-    AIGroup:Route( EngageRoute, 0.5 )
+    AIGroup:Route( EngageRoute, self.TaskDelay )
       
   end
     
@@ -639,7 +670,7 @@ function AI_AIR.Resume( AIGroup, Fsm )
 
   AIGroup:I( { "AI_AIR.Resume:", AIGroup:GetName() } )
   if AIGroup:IsAlive() then
-    Fsm:__RTB( 0.5 )
+    Fsm:__RTB( Fsm.TaskDelay )
   end
   
 end
@@ -659,10 +690,19 @@ function AI_AIR:onafterRefuel( AIGroup, From, Event, To )
   
       --- Calculate the target route point.
       
-      local CurrentCoord = AIGroup:GetCoordinate()
+      local FromRefuelCoord = AIGroup:GetCoordinate()
       local ToRefuelCoord = Tanker:GetCoordinate()
       local ToRefuelSpeed = math.random( self.PatrolMinSpeed, self.PatrolMaxSpeed )
       
+      --- Create a route point of type air.
+      local FromRefuelRoutePoint = FromRefuelCoord:WaypointAir( 
+        self.PatrolAltType, 
+        POINT_VEC3.RoutePointType.TurningPoint, 
+        POINT_VEC3.RoutePointAction.TurningPoint, 
+        ToRefuelSpeed, 
+        true 
+      )
+
       --- Create a route point of type air.
       local ToRefuelRoutePoint = ToRefuelCoord:WaypointAir( 
         self.PatrolAltType, 
@@ -674,7 +714,7 @@ function AI_AIR:onafterRefuel( AIGroup, From, Event, To )
   
       self:F( { ToRefuelSpeed = ToRefuelSpeed } )
       
-      RefuelRoute[#RefuelRoute+1] = ToRefuelRoutePoint
+      RefuelRoute[#RefuelRoute+1] = FromRefuelRoutePoint
       RefuelRoute[#RefuelRoute+1] = ToRefuelRoutePoint
       
       AIGroup:OptionROEHoldFire()
@@ -685,7 +725,7 @@ function AI_AIR:onafterRefuel( AIGroup, From, Event, To )
       Tasks[#Tasks+1] = AIGroup:TaskFunction( self:GetClassName() .. ".Resume", self )
       RefuelRoute[#RefuelRoute].task = AIGroup:TaskCombo( Tasks )
   
-      AIGroup:Route( RefuelRoute, 0.5 )
+      AIGroup:Route( RefuelRoute, self.TaskDelay )
     else
       self:RTB()
     end
@@ -706,9 +746,8 @@ end
 function AI_AIR:OnCrash( EventData )
 
   if self.Controllable:IsAlive() and EventData.IniDCSGroupName == self.Controllable:GetName() then
-    self:E( self.Controllable:GetUnits() )
     if #self.Controllable:GetUnits() == 1 then
-      self:__Crash( 1, EventData )
+      self:__Crash( self.TaskDelay, EventData )
     end
   end
 end
@@ -718,7 +757,7 @@ end
 function AI_AIR:OnEjection( EventData )
 
   if self.Controllable:IsAlive() and EventData.IniDCSGroupName == self.Controllable:GetName() then
-    self:__Eject( 1, EventData )
+    self:__Eject( self.TaskDelay, EventData )
   end
 end
 
@@ -727,6 +766,6 @@ end
 function AI_AIR:OnPilotDead( EventData )
 
   if self.Controllable:IsAlive() and EventData.IniDCSGroupName == self.Controllable:GetName() then
-    self:__PilotDead( 1, EventData )
+    self:__PilotDead( self.TaskDelay, EventData )
   end
 end

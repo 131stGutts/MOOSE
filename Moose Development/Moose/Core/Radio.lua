@@ -160,7 +160,7 @@ end
 --- Set the frequency for the radio transmission.
 -- If the transmitting positionable is a unit or group, this also set the command "SetFrequency" with the defined frequency and modulation.
 -- @param #RADIO self
--- @param #number Frequency Frequency in MHz. Ranges allowed for radio transmissions in DCS : 30-88 / 108-152 / 225-400MHz.
+-- @param #number Frequency Frequency in MHz. Ranges allowed for radio transmissions in DCS : 30-87.995 / 108-173.995 / 225-399.975MHz.
 -- @return #RADIO self
 function RADIO:SetFrequency(Frequency)
   self:F2(Frequency)
@@ -168,7 +168,7 @@ function RADIO:SetFrequency(Frequency)
   if type(Frequency) == "number" then
   
     -- If frequency is in range
-    if (Frequency >= 30 and Frequency < 88) or (Frequency >= 108 and Frequency < 152) or (Frequency >= 225 and Frequency < 400) then
+    if (Frequency >= 30 and Frequency <= 87.995) or (Frequency >= 108 and Frequency <= 173.995) or (Frequency >= 225 and Frequency <= 399.975) then
     
       -- Convert frequency from MHz to Hz
       self.Frequency = Frequency * 1000000
@@ -461,13 +461,13 @@ BEACON.Type={
   ICLS = 131584,
 }
 
---- Beacon systems supported by DCS. 
+--- Beacon systems supported by DCS. https://wiki.hoggitworld.com/view/DCS_command_activateBeacon
 -- @type BEACON.System
 -- @field #number PAR_10
 -- @field #number RSBN_5
 -- @field #number TACAN
 -- @field #number TACAN_TANKER
--- @field #number ILS_LOCALIZER
+-- @field #number ILS_LOCALIZER (This is the one to be used for AA TACAN Tanker!)
 -- @field #number ILS_GLIDESLOPE
 -- @field #number BROADCAST_STATION
 BEACON.System={
@@ -539,7 +539,7 @@ function BEACON:ActivateTACAN(Channel, Mode, Message, Bearing, Duration)
   -- Check if unit is an aircraft and set system accordingly.
   local AA=self.Positionable:IsAir()
   if AA then
-    System=BEACON.System.TACAN_TANKER
+    System=5 --NOTE: 5 is how you cat the correct tanker behaviour! --BEACON.System.TACAN_TANKER
     -- Check if "Y" mode is selected for aircraft.
     if Mode~="Y" then
       self:E({"WARNING: The POSITIONABLE you want to attach the AA Tacan Beacon is an aircraft: Mode should Y !The BEACON is not emitting.", self.Positionable})

@@ -24,7 +24,7 @@ TASKINFO = {
   ClassName = "TASKINFO",
 }
 
---- @type #TASKINFO.Detail #string A string that flags to document which level of detail needs to be shown in the report.
+--- @type TASKINFO.Detail #string A string that flags to document which level of detail needs to be shown in the report.
 -- 
 --   - "M" for Markings on the Map (F10).
 --   - "S" for Summary Reports.
@@ -128,6 +128,15 @@ function TASKINFO:AddCoordinate( Coordinate, Order, Detail, Keep )
   self:AddInfo( "Coordinate", Coordinate, Order, Detail, Keep )
   return self
 end
+
+
+--- Get the Coordinate. 
+-- @param #TASKINFO self
+-- @return Core.Point#COORDINATE Coordinate
+function TASKINFO:GetCoordinate()
+  return self:GetData( "Coordinate" )
+end
+
 
 
 --- Add Coordinates. 

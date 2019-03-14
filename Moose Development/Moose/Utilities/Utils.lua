@@ -56,6 +56,64 @@ DCSMAP = {
   PersianGulf="PersianGulf"
 }
 
+
+--- See [DCS_enum_callsigns](https://wiki.hoggitworld.com/view/DCS_enum_callsigns)
+-- @type CALLSIGN
+CALLSIGN={
+  -- Aircraft
+  Aircraft={
+    Enfield=1,
+    Springfield=2,
+    Uzi=3,
+    Cold=4,
+    Dodge=5,
+    Ford=6,
+    Chevy=7,
+    Pontiac=8,
+    -- A-10A or A-10C
+    Hawg=9,
+    Boar=10,
+    Pig=11,
+    Tusk=12,
+  },
+  -- AWACS
+  AWACS={
+    Overloard=1,
+    Magic=2,
+    Wizard=3,
+    Focus=4,
+    Darkstar=5,
+  },
+  -- Tanker
+  Tanker={
+    Texaco=1,
+    Arco=2,
+    Shell=3,
+  }, 
+  -- JTAC
+  JTAC={
+    Axeman=1,
+    Darknight=2,
+    Warrier=3,
+    Pointer=4,
+    Eyeball=5,
+    Moonbeam=6,
+    Whiplash=7,
+    Finger=8,
+    Pinpoint=9,
+    Ferret=10,
+    Shaba=11,
+    Playboy=12,
+    Hammer=13,
+    Jaguar=14,
+    Deathstar=15,
+    Anvil=16,
+    Firefly=17,
+    Mantis=18,
+    Badger=19,
+  },
+} --#CALLSIGN
+
 --- Utilities static class.
 -- @type UTILS
 UTILS = {
@@ -263,7 +321,11 @@ UTILS.FeetToMeters = function(feet)
 end
 
 UTILS.KnotsToKmph = function(knots)
-  return knots* 1.852
+  return knots * 1.852
+end
+
+UTILS.KmphToKnots = function(knots)
+  return knots / 1.852
 end
 
 UTILS.KmphToMps = function( kmph )
@@ -283,11 +345,11 @@ UTILS.MpsToMiph = function( mps )
 end
 
 UTILS.MpsToKnots = function( mps )
-  return mps * 3600 / 1852
+  return mps * 1.94384 --3600 / 1852
 end
 
 UTILS.KnotsToMps = function( knots )
-  return knots * 1852 / 3600
+  return knots / 1.94384 --* 1852 / 3600
 end
 
 UTILS.CelciusToFarenheit = function( Celcius )
@@ -457,6 +519,31 @@ function UTILS.spairs( t, order )
     end
 end
 
+-- Here is a customized version of pairs, which I called rpairs because it iterates over the table in a random order.
+function UTILS.rpairs( t )
+    -- collect the keys
+    
+    local keys = {}
+    for k in pairs(t) do keys[#keys+1] = k end
+
+    local random = {}
+    local j = #keys
+    for i = 1, j do
+      local k = math.random( 1, #keys )
+      random[i] = keys[k]
+      table.remove( keys, k )
+    end
+    
+    -- return the iterator function
+    local i = 0
+    return function()
+        i = i + 1
+        if random[i] then
+            return random[i], t[random[i]]
+        end
+    end
+end
+
 -- get a new mark ID for markings
 function UTILS.GetMarkID()
 
@@ -558,7 +645,7 @@ function UTILS.SecondsToClock(seconds)
   -- Seconds of this day.
   local _seconds=seconds%(60*60*24)
 
-  if seconds <= 0 then
+  if seconds<0 then
     return nil
   else
     local hours = string.format("%02.f", math.floor(_seconds/3600))
@@ -712,6 +799,65 @@ function UTILS.VecCross(a, b)
   return {x=a.y*b.z - a.z*b.y, y=a.z*b.x - a.x*b.z, z=a.x*b.y - a.y*b.x}
 end
 
+--- Calculate the difference between two 3D vectors by substracting the x,y,z components from each other. 
+-- @param DCS#Vec3 a Vector in 3D with x, y, z components.
+-- @param DCS#Vec3 b Vector in 3D with x, y, z components.
+-- @return DCS#Vec3 Vector c=a-b with c(i)=a(i)-b(i), i=x,y,z.
+function UTILS.VecSubstract(a, b)
+  return {x=a.x-b.x, y=a.y-b.y, z=a.z-b.z}
+end
+
+--- Calculate the total vector of two 3D vectors by adding the x,y,z components of each other. 
+-- @param DCS#Vec3 a Vector in 3D with x, y, z components.
+-- @param DCS#Vec3 b Vector in 3D with x, y, z components.
+-- @return DCS#Vec3 Vector c=a+b with c(i)=a(i)+b(i), i=x,y,z.
+function UTILS.VecAdd(a, b)
+  return {x=a.x+b.x, y=a.y+b.y, z=a.z+b.z}
+end
+
+--- Calculate the angle between two 3D vectors. 
+-- @param DCS#Vec3 a Vector in 3D with x, y, z components.
+-- @param DCS#Vec3 b Vector in 3D with x, y, z components.
+-- @return #number Angle alpha between and b in degrees. alpha=acos(a*b)/(|a||b|), (* denotes the dot product). 
+function UTILS.VecAngle(a, b)
+  local alpha=math.acos(UTILS.VecDot(a,b)/(UTILS.VecNorm(a)*UTILS.VecNorm(b)))
+  return math.deg(alpha)
+end
+
+--- Calculate "heading" of a 3D vector in the X-Z plane.
+-- @param DCS#Vec3 a Vector in 3D with x, y, z components.
+-- @return #number Heading in degrees in [0,360).
+function UTILS.VecHdg(a)
+  local h=math.deg(math.atan2(a.z, a.x))
+  if h<0 then
+    h=h+360
+  end
+  return h
+end
+
+
+--- Rotate 3D vector in the 2D (x,z) plane. y-component (usually altitude) unchanged. 
+-- @param DCS#Vec3 a Vector in 3D with x, y, z components.
+-- @param #number angle Rotation angle in degrees.
+-- @return DCS#Vec3 Vector rotated in the (x,z) plane.
+function UTILS.Rotate2D(a, angle)
+
+  local phi=math.rad(angle)
+  
+  local x=a.z
+  local y=a.x
+    
+  local Z=x*math.cos(phi)-y*math.sin(phi)
+  local X=x*math.sin(phi)+y*math.cos(phi)
+  local Y=a.y
+  
+  local A={x=X, y=Y, z=Z}
+
+  return A
+end
+
+
+
 --- Converts a TACAN Channel/Mode couple into a frequency in Hz.
 -- @param #number TACANChannel The TACAN channel, i.e. the 10 in "10X".
 -- @param #string TACANMode The TACAN mode, i.e. the "X" in "10X".
@@ -755,6 +901,16 @@ function UTILS.GetDCSMap()
   return env.mission.theatre
 end
 
+--- Returns the mission date. This is the date the mission started.
+-- @return #string Mission date in yyyy/mm/dd format.
+function UTILS.GetDCSMissionDate()
+  local year=tostring(env.mission.date.Year)
+  local month=tostring(env.mission.date.Month)
+  local day=tostring(env.mission.date.Day)
+  return string.format("%s/%s/%s", year, month, day)
+end
+
+
 --- Returns the magnetic declination of the map.
 -- Returned values for the current maps are:
 -- 
@@ -785,4 +941,19 @@ function UTILS.GetMagneticDeclination(map)
   return declination
 end
 
-
+--- Checks if a file exists or not. This requires **io** to be desanitized.
+-- @param #string file File that should be checked.
+-- @return #boolean True if the file exists, false if the file does not exist or nil if the io module is not available and the check could not be performed.
+function UTILS.FileExists(file)
+  if io then
+    local f=io.open(file, "r")
+    if f~=nil then
+      io.close(f)
+      return true
+    else
+      return false
+    end
+  else
+    return nil
+  end  
+end
