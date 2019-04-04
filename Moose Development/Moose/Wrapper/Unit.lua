@@ -318,13 +318,37 @@ function UNIT:GetCallsign()
   return nil
 end
 
+--- Check if an (air) unit is a client or player slot. Information is retrieved from the group template.
+-- @param #UNIT self
+-- @return #boolean If true, unit is associated with a client or player slot.
+function UNIT:IsPlayer()
+  
+  -- Get group.
+  local group=self:GetGroup()
+    
+  -- Units of template group.
+  local units=group:GetTemplate().units
+  
+  -- Get numbers.
+  for _,unit in pairs(units) do
+      
+    -- Check if unit name matach and skill is Client or Player.
+    if unit.name==self:GetName() and (unit.skill=="Client" or unit.skill=="Player") then
+      return true
+    end
+
+  end
+  
+  return false
+end
+
 
 --- Returns name of the player that control the unit or nil if the unit is controlled by A.I.
 -- @param #UNIT self
 -- @return #string Player Name
 -- @return #nil The DCS Unit is not existing or alive.  
 function UNIT:GetPlayerName()
-  self:F2( self.UnitName )
+  self:F( self.UnitName )
 
   local DCSUnit = self:GetDCSObject() -- DCS#Unit
   
@@ -807,37 +831,6 @@ end
 
 -- Is functions
 
---- Returns true if the unit is within a @{Zone}.
--- @param #UNIT self
--- @param Core.Zone#ZONE_BASE Zone The zone to test.
--- @return #boolean Returns true if the unit is within the @{Core.Zone#ZONE_BASE}
-function UNIT:IsInZone( Zone )
-  self:F2( { self.UnitName, Zone } )
-
-  if self:IsAlive() then
-    local IsInZone = Zone:IsVec3InZone( self:GetVec3() )
-  
-    return IsInZone 
-  end
-  return false
-end
-
---- Returns true if the unit is not within a @{Zone}.
--- @param #UNIT self
--- @param Core.Zone#ZONE_BASE Zone The zone to test.
--- @return #boolean Returns true if the unit is not within the @{Core.Zone#ZONE_BASE}
-function UNIT:IsNotInZone( Zone )
-  self:F2( { self.UnitName, Zone } )
-
-  if self:IsAlive() then
-    local IsInZone = not Zone:IsVec3InZone( self:GetVec3() )
-    
-    self:T( { IsInZone } )
-    return IsInZone 
-  else
-    return false
-  end
-end
 
 
 --- Returns true if there is an **other** DCS Unit within a radius of the current 2D point of the DCS Unit.
